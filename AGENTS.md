@@ -5,7 +5,7 @@
 ## 使用原則
 
 - 所有資料指令都加 `--json`。標準輸出只會有一個 JSON 值，可直接解析。
-- 錯誤時 exit code 為 1，訊息在標準錯誤；exit code 2 表示 iLearn 登入已過期，請提醒使用者自己執行 `ilearn login`。
+- 錯誤時 exit code 為 1，訊息在標準錯誤；exit code 2 表示尚未設定或 iLearn 登入已過期，請依標準錯誤的訊息提醒使用者自己執行 `ilearn setup` 或 `ilearn login`。
 - 你的 agent 名稱自己決定（英數、`.`、`_`、`-`，最長 64 字元），用於 `--agent` 與 `ack`，各 agent 各自有進度。
 - 時間一律是台北時間（`+08:00`）。
 
@@ -13,7 +13,7 @@
 
 | 指令 | 回傳 |
 | --- | --- |
-| `ilearn tasks --json` | `{ initial_sync_in_progress, incomplete_courses, tasks[] }`。`tasks[]` 欄位：`id`、`kind`（`assignment` 或 `video`）、`course`、`title`、`due_at`、`overdue`、`group`、`teammate_hint`、`completion`、`url` |
+| `ilearn tasks --json` | `{ initial_sync_in_progress, incomplete_courses, tasks[] }`。`tasks[]` 欄位：`id`、`kind`（`assignment` 或 `video`）、`course`、`title`、`due_at`、`overdue`、`not_started`、`group`、`teammate_hint`、`completion`、`url` |
 | `ilearn events --deliverable --agent <名稱> --json` | 該 agent 尚未 ack 且 `deliver_after` 已到的事件陣列 |
 | `ilearn events ack <名稱> <event_id>` | 標記該 agent 已處理到此事件（含之前的） |
 | `ilearn events [--type <類型>] [--since <ISO 時間>] --json` | 查詢全部事件 |
@@ -29,6 +29,8 @@
 `initial_sync_in_progress` 為 `true` 時，首次同步還沒完成，清單可能不完整。這時不要告訴使用者「沒有作業」，要說明資料還在提取中。`incomplete_courses` 不為空時，表示那幾科的資料可能不完整。
 
 `teammate_hint` 為 `true` 表示小組作業可能已由隊員繳交，但系統無法確認，仍視為未完成。
+
+`not_started` 為 `true` 表示作業尚未開放繳交（開放時間在未來），不要催促使用者現在處理。
 
 ## 事件格式
 
