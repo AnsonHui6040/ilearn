@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
+import { THU_PERIOD_TIMES } from '../domain/schedule.js';
 import type { Delivery } from '../types.js';
 import { dataRoot, writeSecureFile } from './paths.js';
 
@@ -34,7 +35,7 @@ export const DEFAULT_CONFIG: Config = {
   files: { download_disallowed: 'skip' },
   summaries: { daily_limit: 20, courses: {} },
   course_overrides: {},
-  period_times: {},
+  period_times: structuredClone(THU_PERIOD_TIMES),
   password_saved: false,
 };
 

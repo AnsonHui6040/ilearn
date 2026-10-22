@@ -23,6 +23,19 @@ function courseNames(ctx: CliContext): Map<string, string> {
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
+/** 公告的 iLearn 發布時間（ISO UTC）；沒有時以首次偵測時間代替。 */
+export function postedAt(it: StoredItem): string {
+  try {
+    const v = (JSON.parse(it.raw) as { created_at?: unknown }).created_at;
+    if (typeof v === 'string' && v !== '') return v;
+  } catch {
+    // raw 損毀時沿用首次偵測時間
+  }
+  return it.first_seen_at;
+}
+
+const newestPosted = (a: StoredItem, b: StoredItem): number => Date.parse(postedAt(b)) - Date.parse(postedAt(a));
+
 /** 對外輸出的項目：不含 raw，時間一律 +08:00。 */
 export function publicItem(it: StoredItem, names: Map<string, string>) {
   return {
@@ -45,6 +58,7 @@ export function publicItem(it: StoredItem, names: Map<string, string>) {
     matched_rules: it.matched_rules,
     delivery: it.delivery,
     first_seen_at: tp(it.first_seen_at),
+    posted_at: it.kind === 'announcement' ? tp(postedAt(it)) : null,
   };
 }
 
@@ -158,9 +172,7 @@ export function courseCommand(ctx: CliContext, id: string) {
     }
   }
   const assignments = items.filter((i) => i.kind === 'assignment').sort(byDue);
-  const announcements = items
-    .filter((i) => i.kind === 'announcement')
-    .sort((a, b) => (a.first_seen_at < b.first_seen_at ? 1 : -1));
+  const announcements = items.filter((i) => i.kind === 'announcement').sort(newestPosted);
   const grades = items
     .filter((i) => (i.kind === 'assignment' || i.kind === 'exam' || i.kind === 'grade') && (i.score !== null || i.feedback !== null))
     .map((i) => publicItem(i, names));
@@ -189,7 +201,7 @@ export function announcementsCommand(ctx: CliContext, o: { category?: string; co
   const names = courseNames(ctx);
   return listItems(ctx.db, { kind: 'announcement', ...(o.course !== undefined ? { course_id: o.course } : {}) })
     .filter((i) => o.category === undefined || (i.manual_categories ?? i.categories).includes(o.category))
-    .sort((a, b) => (a.first_seen_at < b.first_seen_at ? 1 : -1))
+    .sort(newestPosted)
     .map((i) => publicItem(i, names));
 }
 

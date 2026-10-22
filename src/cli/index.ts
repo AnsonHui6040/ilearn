@@ -276,6 +276,17 @@ rules
   });
 
 program
+  .command('ui')
+  .description('開啟全螢幕介面（只能在互動終端使用）')
+  .action(async () => {
+    const { assertInteractive, defaultDeps, nodeTerm, runUi } = await import('../tui/app.js');
+    assertInteractive(Boolean(process.stdin.isTTY), Boolean(process.stdout.isTTY));
+    await runUi(createSetUpContext(), nodeTerm(), await defaultDeps());
+    // 收到 SIGTERM 時同步或登入可能仍在進行，介面關閉後直接結束程序
+    process.exit();
+  });
+
+program
   .command('mcp')
   .description('以 stdio 啟動 MCP server，供支援 MCP 的 agent 讀取資料')
   .action(async () => {

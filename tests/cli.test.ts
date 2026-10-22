@@ -1,9 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/ilearn/api.js';
-import { upsertFile, upsertItem, type StoredFile, type StoredItem } from '../src/db/repo.js';
+import { listItems, upsertFile, upsertItem, type StoredFile, type StoredItem } from '../src/db/repo.js';
 import { runSync } from '../src/sync/sync.js';
 import { CliExit, createContext, createReadContext, loadRules, type CliContext } from '../src/cli/context.js';
 import {
@@ -16,12 +16,15 @@ import {
   filesSearchCommand,
   gradesCommand,
   markTeammateCommand,
+  postedAt,
   statusCommand,
   tasksCommand,
 } from '../src/cli/commands/query.js';
+import { toTaipeiIso } from '../src/time.js';
 import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
 import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
 import {
+  askRules,
   DEFAULT_WEBHOOK_URL,
   deliverySummary,
   detectEnvironment,
@@ -249,6 +252,26 @@ describe('courses, announcements, grades, files', () => {
     expect(announcementsCommand(ctx, { category: 'no_such_category' })).toHaveLength(0);
     const cat = announcementsCommand(ctx, {})[0]?.categories[0] ?? '';
     expect(announcementsCommand(ctx, { category: cat })).toHaveLength(1);
+  });
+
+  it('announcements carry posted_at from iLearn and sort newest first', async () => {
+    const data = standardData();
+    data.bulletins[1]?.push({ id: 88002, title: '期中考公告', content: '<p>11/5 期中考</p>', created_at: '2026-10-20T02:00:00Z' });
+    const { ctx } = await seeded({ data });
+    const rows = announcementsCommand(ctx, {});
+    expect(rows.map((r) => r.id)).toEqual(['announcement:88002', 'announcement:88000']);
+    expect(rows[0]?.posted_at).toBe('2026-10-20T10:00:00+08:00');
+    expect(rows[1]?.posted_at).toBe('2026-09-10T10:00:00+08:00');
+    expect(courseCommand(ctx, '1').announcements[0]?.posted_at).toBe('2026-10-20T10:00:00+08:00');
+    expect(tasksCommand(ctx).tasks.every((t) => !('posted_at' in t))).toBe(true);
+  });
+
+  it('postedAt falls back to first_seen_at when iLearn gave no created_at', async () => {
+    const { ctx } = await seeded();
+    ctx.db.prepare("UPDATE items SET raw = '{}' WHERE id = 'announcement:88000'").run();
+    const it = listItems(ctx.db, { kind: 'announcement' })[0];
+    expect(it && postedAt(it)).toBe(it?.first_seen_at);
+    expect(announcementsCommand(ctx, {})[0]?.posted_at).toBe(toTaipeiIso(new Date(it?.first_seen_at ?? '')));
   });
 
   it('files search finds by name; file text reads .md and reports other formats as unsupported', async () => {
@@ -643,5 +666,57 @@ describe('setup layout helpers', () => {
     expect(setupDefaults(cfg, 'desktop')).toEqual({
       environment: 'vps', folder: false, passwordSaved: true, materials: ['a'], announcements: ['b'],
     });
+  });
+});
+
+describe('setup rules step', () => {
+  function fakePrompts(checks: string[][], confirms: boolean[]) {
+    const calls = { checkbox: 0, confirm: [] as string[] };
+    return {
+      calls,
+      p: {
+        checkbox: (() => Promise.resolve(checks[calls.checkbox++] ?? [])) as never,
+        confirm: ((o: { message: string }) => {
+          calls.confirm.push(o.message);
+          return Promise.resolve(confirms.shift() ?? false);
+        }) as never,
+      },
+    };
+  }
+  const quiet = () => vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+  it('asks again before disabling every rule, and keeps rules when declined', async () => {
+    const { ctx, root } = mk();
+    const out = quiet();
+    const all = ctx.rules.map((r) => r.id);
+    const f = fakePrompts([[], all], [false]);
+    await askRules(ctx, f.p);
+    out.mockRestore();
+    expect(f.calls.checkbox).toBe(2);
+    expect(f.calls.confirm).toEqual(['全部規則都會停用，新公告不會推送給 agent，確定嗎？']);
+    expect(existsSync(join(root, 'rules.yaml'))).toBe(false);
+    expect(ctx.rules.every((r) => r.enabled)).toBe(true);
+  });
+
+  it('disables every rule only after confirmation', async () => {
+    const { ctx, root } = mk();
+    const out = quiet();
+    const f = fakePrompts([[]], [true]);
+    await askRules(ctx, f.p);
+    const printed = out.mock.calls.map((c) => String(c[0])).join('');
+    out.mockRestore();
+    expect(printed).toContain('通知規則啟用 0 條，停用 13 條');
+    expect(readFileSync(join(root, 'rules.yaml'), 'utf8')).not.toMatch(/enabled: true/);
+    expect(ctx.rules.every((r) => !r.enabled)).toBe(true);
+  });
+
+  it('does not ask for confirmation when at least one rule stays enabled', async () => {
+    const { ctx } = mk();
+    const out = quiet();
+    const f = fakePrompts([['exam']], []);
+    await askRules(ctx, f.p);
+    out.mockRestore();
+    expect(f.calls.confirm).toEqual([]);
+    expect(ctx.rules.filter((r) => r.enabled).map((r) => r.id)).toEqual(['exam']);
   });
 });

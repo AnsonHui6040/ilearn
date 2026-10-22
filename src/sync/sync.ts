@@ -480,6 +480,7 @@ function syncBulletin(run: Run, course: CourseRef, b: ApiBulletin): void {
   item.body = body;
   item.url = urls.bulletin(course.id);
   item.first_seen_at = run.nowIso;
+  item.raw = JSON.stringify({ created_at: b.created_at ?? null });
   const cls = classifyFor(run, course.id, b.title, body);
   withClass(item, prev, cls);
   upsertItem(ctx.db, item);

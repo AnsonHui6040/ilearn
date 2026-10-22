@@ -17,7 +17,7 @@ description: 讀取使用者已同步到本機的東海大學 iLearn 資料（�
 | 要通知使用者的新事件 | `events`（`deliverable: true`、`agent: <你的名稱>`） | `ilearn events --deliverable --agent <你的名稱> --json` |
 | 標記事件已處理 | `events_ack` | `ilearn events ack <你的名稱> <event_id>` |
 | 課程列表、單一課程 | `courses`、`course` | `ilearn courses --json`、`ilearn course <id> --json` |
-| 公告 | `announcements` | `ilearn announcements [--category <代碼>] --json` |
+| 公告（`posted_at` 為 iLearn 發布時間） | `announcements` | `ilearn announcements [--category <代碼>] --json` |
 | 分數與評語 | `grades` | `ilearn grades [--course <id>] --json` |
 | 找檔案、讀文字檔 | `files_search`、`file_text` | `ilearn files search <關鍵字> --json`、`ilearn file text <id>` |
 | 同步狀態 | `status` | `ilearn status --json` |

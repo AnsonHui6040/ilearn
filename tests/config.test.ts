@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../src/config/config.js';
 import { dataRoot } from '../src/config/paths.js';
+import { THU_PERIOD_TIMES } from '../src/domain/schedule.js';
 
 let dir: string;
 beforeEach(() => {
@@ -17,6 +18,11 @@ afterEach(() => {
 describe('config', () => {
   it('loadConfig on empty dir returns defaults', () => {
     expect(loadConfig(dir)).toEqual(DEFAULT_CONFIG);
+  });
+
+  it('舊設定檔的 period_times 為空時沿用東海節次時間', () => {
+    writeFileSync(join(dir, 'config.yaml'), 'period_times: {}\n');
+    expect(loadConfig(dir).period_times).toEqual(THU_PERIOD_TIMES);
   });
 
   it('saveConfig writes 0600 file in 0700 dir and round-trips', () => {

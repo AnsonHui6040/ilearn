@@ -75,6 +75,7 @@ delivery:
 | 指令 | 用途 |
 | --- | --- |
 | `ilearn setup` | 首次設定精靈 |
+| `ilearn ui` | 全螢幕介面：查看待辦、課程、提醒，並修改設定（只能在互動終端使用） |
 | `ilearn login` / `ilearn logout` | 重新登入；刪除 session 與已保存的密碼 |
 | `ilearn sync [--force]` | 立即同步並下載檔案 |
 | `ilearn run` | 給 cron 使用 |
@@ -91,6 +92,20 @@ delivery:
 | `ilearn rules list`、`ilearn rules test [檔案]`、`ilearn rules edit` | 列出、試算、編輯關鍵詞規則 |
 | `ilearn status [--json]` | 同步狀態、最近錯誤、首次同步進度、推送狀態 |
 | `ilearn mcp` | 以 stdio 啟動 MCP server，供支援 MCP 的 agent 使用 |
+
+## 全螢幕介面
+
+沒有使用 AI agent 時，可以用 `ilearn ui` 直接查看與設定。介面分 5 頁：
+
+| 按鍵 | 頁面 | 內容 |
+| --- | --- | --- |
+| 1 | 首頁 | 需要處理的作業與影片：逾期、7 日內、之後、尚未開放 |
+| 2 | 課程 | 代號、上課時間、教室；按 Enter 進入課程，查看待辦、公告、教材檔案、分數等 |
+| 3 | 提醒 | 系統提示、今天起會發出的截止提醒、今天起發布的公告 |
+| 4 | 課程設定 | 每科的通知規則與截止提醒 |
+| 5 | 系統設定 | Reload、立即同步、介面、推送方式、夜間時段、截止提醒、通知規則（含關鍵詞與試算）、帳號、Reset |
+
+操作方式：方向鍵移動或切換左右欄，空白鍵剔選，Enter 確認或開啟，Esc 返回，q 離開。剔選後要再按 Enter 看過「將變更 N 項」並確認才會寫入。終端寬度不足 80 欄時改為單欄。
 
 加上 `--json` 時，標準輸出只會有一個 JSON 值；錯誤以 exit code 1 與標準錯誤輸出的中文訊息表示。登入過期且沒有保存密碼時 exit code 為 2。
 
@@ -120,7 +135,7 @@ files:
 
 ## 給 AI agent
 
-請看 [AGENTS.md](AGENTS.md)，內有指令、MCP 工具、事件格式與 agent 權限。支援 Skill 的 agent 可以使用 [SKILL.md](SKILL.md)。
+請看 [AGENTS.md](AGENTS.md)，內有指令、MCP 工具、事件格式與 agent 權限。`ilearn ui` 只供本人在互動終端使用，agent 在非互動環境執行會被拒絕。支援 Skill 的 agent 可以使用 [SKILL.md](SKILL.md)。
 
 MCP 客戶端設定範例：
 

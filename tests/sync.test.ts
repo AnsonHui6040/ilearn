@@ -97,6 +97,24 @@ describe('initial sync', () => {
   });
 });
 
+describe('announcement posted time', () => {
+  it('stores iLearn created_at in raw', async () => {
+    const env = makeEnv();
+    await runSync(env.ctx);
+    const it = getItem(env.db, 'announcement:88000', 'announcement');
+    expect(JSON.parse(it?.raw ?? '{}').created_at).toBe('2026-09-10T02:00:00Z');
+  });
+
+  it('backfills created_at for an announcement stored without it, with no new event', async () => {
+    const env = await afterInitial();
+    env.db.prepare("UPDATE items SET raw = '{}' WHERE id = 'announcement:88000'").run();
+    await runSync(env.ctx);
+    const it = getItem(env.db, 'announcement:88000', 'announcement');
+    expect(JSON.parse(it?.raw ?? '{}').created_at).toBe('2026-09-10T02:00:00Z');
+    expect(of(env, 'announcement.new')).toHaveLength(0);
+  });
+});
+
 describe('later syncs', () => {
   it('announcement 改至 M201 emits one announcement.new with room_change', async () => {
     const env = await afterInitial();

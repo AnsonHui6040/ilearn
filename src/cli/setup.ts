@@ -370,7 +370,7 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
     message: '要啟用的介面',
     choices: [
       { name: '終端機', value: 'terminal', checked: true },
-      { name: '文件夾（Markdown 檢視）', value: 'folder', checked: d.folder },
+      { name: '資料夾（Markdown 檢視）', value: 'folder', checked: d.folder },
       { name: '網頁（後續階段提供）', value: 'web', disabled: true },
       { name: '桌面 app（後續階段提供）', value: 'desktop', disabled: true },
     ],
@@ -383,7 +383,7 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
     desktop: false,
   };
   saveConfig(ctx.config, ctx.root);
-  saved(ctx.config.interfaces.folder ? '終端機、文件夾（Markdown 檢視）' : '終端機');
+  saved(ctx.config.interfaces.folder ? '終端機、資料夾（Markdown 檢視）' : '終端機');
 
   header(5, '推送方式');
   const dl = ctx.config.delivery;
@@ -421,12 +421,23 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
   saveConfig(ctx.config, ctx.root);
   saved(deliverySummary(next));
 
+  await askRules(ctx, p);
+}
+
+/** 第 6 步：全部取消勾選時先確認，避免誤把規則全部停用。 */
+export async function askRules(ctx: CliContext, p: Pick<Prompts, 'checkbox' | 'confirm'>): Promise<void> {
   header(6, '通知規則');
-  const enabled = await p.checkbox({
-    message: '通知規則（預設已勾選，直接 Enter 即採用預設）',
-    choices: ctx.rules.map((r) => ({ name: `${r.name}（${r.action}）`, value: r.id, checked: r.enabled })),
-    theme: checkboxTheme,
-  });
+  let enabled: string[];
+  for (;;) {
+    enabled = await p.checkbox({
+      message: '通知規則（預設已勾選，直接 Enter 即採用預設）',
+      choices: ctx.rules.map((r) => ({ name: `${r.name}（${r.action}）`, value: r.id, checked: r.enabled })),
+      theme: checkboxTheme,
+    });
+    if (enabled.length > 0 || ctx.rules.length === 0) break;
+    const sure = await p.confirm({ message: '全部規則都會停用，新公告不會推送給 agent，確定嗎？', default: false, transformer: yn });
+    if (sure) break;
+  }
   const set = new Set(enabled);
   if (ctx.rules.some((r) => r.enabled !== set.has(r.id))) {
     const next = ctx.rules.map((r) => ({ ...r, enabled: set.has(r.id) }));
