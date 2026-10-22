@@ -19,7 +19,7 @@
 | `ilearn events [--type <類型>] [--since <ISO 時間>] --json` | 查詢全部事件 |
 | `ilearn courses --json` | 課程列表 |
 | `ilearn course <id> --json` | 單一課程：上課時間、待辦、已完成、考試、公告與分類、教材與檔案的本地路徑、問卷、影片、分數與評語 |
-| `ilearn announcements [--category <代碼>] [--course <id>] --json` | 公告與分類 |
+| `ilearn announcements [--category <代碼>] [--course <id>] --json` | 公告與分類，依發布時間由新到舊；`posted_at` 為 iLearn 發布時間 |
 | `ilearn grades [--course <id>] --json` | 分數與評語 |
 | `ilearn files search <關鍵字> --json` | 以檔名搜尋，回傳本地路徑 |
 | `ilearn file text <id>` | 輸出 `.txt`、`.md` 檔案的文字；其他格式回傳「尚未支援」 |

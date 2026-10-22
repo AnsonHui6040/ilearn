@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../src/ilearn/api.js';
-import { upsertFile, upsertItem, type StoredFile, type StoredItem } from '../src/db/repo.js';
+import { listItems, upsertFile, upsertItem, type StoredFile, type StoredItem } from '../src/db/repo.js';
 import { runSync } from '../src/sync/sync.js';
 import { CliExit, createContext, createReadContext, loadRules, type CliContext } from '../src/cli/context.js';
 import {
@@ -16,9 +16,11 @@ import {
   filesSearchCommand,
   gradesCommand,
   markTeammateCommand,
+  postedAt,
   statusCommand,
   tasksCommand,
 } from '../src/cli/commands/query.js';
+import { toTaipeiIso } from '../src/time.js';
 import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
 import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
 import {
@@ -249,6 +251,26 @@ describe('courses, announcements, grades, files', () => {
     expect(announcementsCommand(ctx, { category: 'no_such_category' })).toHaveLength(0);
     const cat = announcementsCommand(ctx, {})[0]?.categories[0] ?? '';
     expect(announcementsCommand(ctx, { category: cat })).toHaveLength(1);
+  });
+
+  it('announcements carry posted_at from iLearn and sort newest first', async () => {
+    const data = standardData();
+    data.bulletins[1]?.push({ id: 88002, title: '期中考公告', content: '<p>11/5 期中考</p>', created_at: '2026-10-20T02:00:00Z' });
+    const { ctx } = await seeded({ data });
+    const rows = announcementsCommand(ctx, {});
+    expect(rows.map((r) => r.id)).toEqual(['announcement:88002', 'announcement:88000']);
+    expect(rows[0]?.posted_at).toBe('2026-10-20T10:00:00+08:00');
+    expect(rows[1]?.posted_at).toBe('2026-09-10T10:00:00+08:00');
+    expect(courseCommand(ctx, '1').announcements[0]?.posted_at).toBe('2026-10-20T10:00:00+08:00');
+    expect(tasksCommand(ctx).tasks.every((t) => !('posted_at' in t))).toBe(true);
+  });
+
+  it('postedAt falls back to first_seen_at when iLearn gave no created_at', async () => {
+    const { ctx } = await seeded();
+    ctx.db.prepare("UPDATE items SET raw = '{}' WHERE id = 'announcement:88000'").run();
+    const it = listItems(ctx.db, { kind: 'announcement' })[0];
+    expect(it && postedAt(it)).toBe(it?.first_seen_at);
+    expect(announcementsCommand(ctx, {})[0]?.posted_at).toBe(toTaipeiIso(new Date(it?.first_seen_at ?? '')));
   });
 
   it('files search finds by name; file text reads .md and reports other formats as unsupported', async () => {

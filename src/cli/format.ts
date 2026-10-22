@@ -41,7 +41,7 @@ export function courseText(r: Ret<typeof courseCommand>): string {
 
 export function announcementsText(rows: Ret<typeof announcementsCommand>): string {
   if (rows.length === 0) return '沒有符合的公告';
-  return rows.map((a) => `${short(a.first_seen_at)}  ${a.course ?? ''}  ${a.title}  [${a.categories.join(',')}]`).join('\n');
+  return rows.map((a) => `${short(a.posted_at)}  ${a.course ?? ''}  ${a.title}  [${a.categories.join(',')}]`).join('\n');
 }
 
 export function gradesText(rows: Ret<typeof gradesCommand>): string {
