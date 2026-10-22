@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { chooseBackend, savePassword, VPS_RISK_WARNING } from '../auth/credentials.js';
 import { saveConfig, type Config } from '../config/config.js';
@@ -7,11 +9,46 @@ import { AuthError } from '../ilearn/auth.js';
 import { stringifyRules } from '../rules/yaml.js';
 import type { SyncProgress, SyncReport } from '../sync/sync.js';
 import { toTaipeiIso } from '../time.js';
-import { backendFor, loginWith } from './auth.js';
+import { backendFor, loginWith, savedSessionUser } from './auth.js';
 import { abortableApi, syncCommand, type SyncOutcome } from './commands/sync.js';
 import { CliExit, rulesPath, type CliContext } from './context.js';
 
 /* ---------- 純函式 ---------- */
+
+export const KEYS_HELP_CHECKBOX = '↑↓ 移動\u3000空白鍵 剔選\u3000a 全選\u3000i 反選\u3000Enter 確認';
+export const KEYS_HELP_SELECT = '↑↓ 移動\u3000Enter 確認';
+
+const checkboxTheme = { style: { keysHelpTip: (): string => KEYS_HELP_CHECKBOX } };
+const selectTheme = { style: { keysHelpTip: (): string => KEYS_HELP_SELECT } };
+
+const RULE = '─'.repeat(30);
+
+export function stepHeader(n: number, total: number, title: string): string {
+  return `${RULE}\n步驟 ${n}\uFF0F${total}\u3000${title}\n${RULE}`;
+}
+
+export interface SetupDefaults {
+  environment: 'desktop' | 'vps';
+  folder: boolean;
+  passwordSaved: boolean;
+  materials: string[];
+  announcements: string[];
+}
+
+/** 重跑設定精靈時的預設值：有舊設定就沿用，沒有就用偵測結果。 */
+export function setupDefaults(config: Config | null, detectedEnv: 'desktop' | 'vps'): SetupDefaults {
+  if (config === null) {
+    return { environment: detectedEnv, folder: detectedEnv === 'vps', passwordSaved: false, materials: [], announcements: [] };
+  }
+  const entries = Object.entries(config.summaries.courses);
+  return {
+    environment: config.environment,
+    folder: config.interfaces.folder,
+    passwordSaved: config.password_saved,
+    materials: entries.filter(([, v]) => v.materials).map(([id]) => id),
+    announcements: entries.filter(([, v]) => v.announcements).map(([id]) => id),
+  };
+}
 
 /**
  * SSH 連線中一律視為 VPS；Linux 沒有圖形介面（DISPLAY、WAYLAND_DISPLAY 皆無）也視為 VPS。
@@ -134,9 +171,20 @@ const say = (s = ''): void => void process.stdout.write(`${s}\n`);
 
 /* ---------- 互動流程 ---------- */
 
+type Prompts = typeof import('@inquirer/prompts');
+
+const TOTAL_STEPS = 8;
+const header = (n: number, title: string): void => say(stepHeader(n, TOTAL_STEPS, title));
+const ok = (text: string): void => {
+  say(`✔ ${text}`);
+  say();
+};
+/** 只在確實寫入磁碟之後呼叫。 */
+const saved = (text: string): void => ok(`已儲存：${text}`);
+
 async function promptCredentials(
   ctx: CliContext,
-  p: typeof import('@inquirer/prompts'),
+  p: Prompts,
 ): Promise<{ username: string; password: string }> {
   for (;;) {
     const username = (await p.input({ message: '學號', ...(ctx.username ? { default: ctx.username } : {}) })).trim();
@@ -153,22 +201,30 @@ async function promptCredentials(
 
 async function askSavePassword(
   ctx: CliContext,
-  p: typeof import('@inquirer/prompts'),
+  p: Prompts,
   username: string,
   password: string,
+  defaultSave: boolean,
 ): Promise<void> {
   if (ctx.config.environment === 'vps') {
     say(`提醒：${VPS_RISK_WARNING}`);
   }
-  const save = await p.confirm({ message: '要保存密碼，讓 session 過期時自動重新登入嗎？', default: false });
+  const save = await p.confirm({ message: '要保存密碼，讓 session 過期時自動重新登入嗎？', default: defaultSave });
   ctx.config.password_saved = false;
-  if (!save) return;
-  try {
-    await savePassword(ctx.root, chooseBackend(ctx.config.environment), username, password);
-    ctx.config.password_saved = true;
-  } catch (e) {
-    say(`${e instanceof Error ? e.message : '無法保存密碼'}，改為只保存 session`);
+  let note = '不保存密碼，只保存 session';
+  if (save) {
+    const backend = chooseBackend(ctx.config.environment);
+    try {
+      await savePassword(ctx.root, backend, username, password);
+      ctx.config.password_saved = true;
+      note = backend === 'keychain' ? '密碼存入系統憑證庫' : '密碼存入加密檔';
+    } catch (e) {
+      say(`${e instanceof Error ? e.message : '無法保存密碼'}，改為只保存 session`);
+      note = '沒有保存密碼，只保存 session';
+    }
   }
+  saveConfig(ctx.config, ctx.root);
+  saved(note);
 }
 
 /** ilearn login：重新登入；若已保存密碼則一併更新。 */
@@ -191,27 +247,47 @@ function isPromptExit(e: unknown): boolean {
 
 export async function runSetup(ctx: CliContext): Promise<void> {
   const p = await import('@inquirer/prompts');
+  const hadConfig = existsSync(join(ctx.root, 'config.yaml'));
+  const d = setupDefaults(hadConfig ? ctx.config : null, detectEnvironment(process.env));
   say('thu-ilearn 設定精靈');
   say('本工具為非官方工具，資料只存在這台電腦，使用前請自行查閱學校資訊使用規範。');
   say();
 
-  // 1. 環境
-  const detected = detectEnvironment(process.env);
+  // 步驟 1：環境
+  header(1, '執行環境');
   ctx.config.environment = await p.select({
     message: '目前的執行環境',
     choices: [
       { name: '本機桌面（有圖形介面）', value: 'desktop' as const },
       { name: 'VPS 或雲端主機（無圖形介面）', value: 'vps' as const },
     ],
-    default: detected,
+    default: d.environment,
+    theme: selectTheme,
   });
-
-  // 2、3. 登入與密碼
-  const { username, password } = await promptCredentials(ctx, p);
-  await askSavePassword(ctx, p, username, password);
   saveConfig(ctx.config, ctx.root);
+  saved(ctx.config.environment === 'vps' ? 'VPS 或雲端主機' : '本機桌面');
 
-  // 4. 首次提取在背景進行
+  // 步驟 2、3：登入與密碼
+  header(2, '登入 iLearn');
+  let reuse = false;
+  const existing = await savedSessionUser(ctx);
+  if (existing !== null && ctx.username !== null) {
+    reuse = await p.confirm({ message: `目前已登入（學號 ${ctx.username}），要沿用這次登入嗎？`, default: true });
+    if (reuse) ctx.userId = existing.userId;
+  }
+  if (reuse) {
+    ok('沿用目前登入');
+    header(3, '保存密碼');
+    ok('沿用目前設定');
+  } else {
+    await promptCredentials(ctx, p).then(async ({ username, password }) => {
+      ok('已登入');
+      header(3, '保存密碼');
+      await askSavePassword(ctx, p, username, password, d.passwordSaved);
+    });
+  }
+
+  // 首次提取在背景進行
   const ac = new AbortController();
   ctx.api = abortableApi(ctx.api, ac.signal);
   ctx.wrapApi = (api) => abortableApi(api, ac.signal);
@@ -235,9 +311,7 @@ export async function runSetup(ctx: CliContext): Promise<void> {
   say();
 
   try {
-    // 5. 其餘設定
-    await askRemaining(ctx, p);
-    saveConfig(ctx.config, ctx.root);
+    await askRemaining(ctx, p, d);
 
     printing = true;
     const result = await settled;
@@ -251,11 +325,9 @@ export async function runSetup(ctx: CliContext): Promise<void> {
     }
     const report = result.outcome.report;
 
-    await askSummaries(ctx, p);
-    saveConfig(ctx.config, ctx.root);
+    await askSummaries(ctx, p, d);
 
-    // 6. 完成摘要
-    say();
+    // 完成摘要
     if (report) say(formatSummary(report, summaryExtras(ctx.db, ctx.now())));
     say();
     say('背景服務註冊：Phase 5 提供。目前可用 cron 定時執行：*/5 * * * * ilearn run');
@@ -270,15 +342,17 @@ export async function runSetup(ctx: CliContext): Promise<void> {
   }
 }
 
-async function askRemaining(ctx: CliContext, p: typeof import('@inquirer/prompts')): Promise<void> {
+async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Promise<void> {
+  header(4, '要啟用的介面');
   const ifaces = await p.checkbox({
-    message: '要啟用的介面（空白鍵剔選，Enter 確認）',
+    message: '要啟用的介面',
     choices: [
       { name: '終端機', value: 'terminal', checked: true },
-      { name: '文件夾（Markdown 檢視）', value: 'folder', checked: ctx.config.environment === 'vps' },
+      { name: '文件夾（Markdown 檢視）', value: 'folder', checked: d.folder },
       { name: '網頁（後續階段提供）', value: 'web', disabled: true },
       { name: '桌面 app（後續階段提供）', value: 'desktop', disabled: true },
     ],
+    theme: checkboxTheme,
   });
   ctx.config.interfaces = {
     terminal: true,
@@ -286,43 +360,86 @@ async function askRemaining(ctx: CliContext, p: typeof import('@inquirer/prompts
     web: false,
     desktop: false,
   };
+  saveConfig(ctx.config, ctx.root);
+  saved(ctx.config.interfaces.folder ? '終端機、文件夾（Markdown 檢視）' : '終端機');
 
-  const delivery = await p.checkbox({
+  header(5, '推送方式');
+  await p.checkbox({
     message: '推送方式',
     choices: [
       { name: 'outbox 檔案（必備）', value: 'outbox', checked: true },
       { name: '本機指令 hook（Phase 3 提供）', value: 'hook', disabled: true },
       { name: '本機 webhook（Phase 3 提供）', value: 'webhook', disabled: true },
     ],
+    theme: checkboxTheme,
   });
-  if (!delivery.includes('outbox')) say('outbox 是必備的推送方式，已保留。');
+  ok('推送方式固定為 outbox 檔案（必備）');
 
+  header(6, '通知規則');
   const enabled = await p.checkbox({
     message: '通知規則（預設已勾選，直接 Enter 即採用預設）',
     choices: ctx.rules.map((r) => ({ name: `${r.name}（${r.action}）`, value: r.id, checked: r.enabled })),
+    theme: checkboxTheme,
   });
   const set = new Set(enabled);
   if (ctx.rules.some((r) => r.enabled !== set.has(r.id))) {
     const next = ctx.rules.map((r) => ({ ...r, enabled: set.has(r.id) }));
     writeSecureFile(rulesPath(ctx.root), stringifyRules(next));
     ctx.rules = next;
+    saved(`通知規則啟用 ${set.size} 條，停用 ${next.length - set.size} 條`);
+  } else {
+    ok('沿用目前的通知規則');
   }
 }
 
-async function askSummaries(ctx: CliContext, p: typeof import('@inquirer/prompts')): Promise<void> {
-  const courses = ctx.db
-    .prepare('SELECT id, name FROM courses WHERE semester = (SELECT MAX(semester) FROM courses) ORDER BY name')
-    .all() as unknown as { id: string; name: string }[];
-  if (courses.length === 0) return;
-  const pick = async (message: string): Promise<Set<string>> =>
-    new Set(await p.checkbox({ message, choices: courses.map((c) => ({ name: c.name, value: c.id })) }));
-  const materials = await pick('啟用「教材檔案摘要」的課程（預設全不剔選，只顯示標題）');
-  const announcements = await pick('啟用「老師公告摘要」的課程（預設全不剔選，只顯示標題）');
+function applySummaries(
+  ctx: CliContext,
+  courses: { id: string }[],
+  materials: Set<string>,
+  announcements: Set<string>,
+): void {
+  const ids = new Set(courses.map((c) => c.id));
   const next: Config['summaries']['courses'] = {};
+  for (const [id, v] of Object.entries(ctx.config.summaries.courses)) if (!ids.has(id)) next[id] = v;
   for (const c of courses) {
     if (materials.has(c.id) || announcements.has(c.id)) {
       next[c.id] = { materials: materials.has(c.id), announcements: announcements.has(c.id) };
     }
   }
   ctx.config.summaries.courses = next;
+  saveConfig(ctx.config, ctx.root);
+}
+
+const countText = (n: number): string => (n === 0 ? '沒有選擇任何課程' : `${n} 門課程`);
+
+async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults): Promise<void> {
+  const courses = ctx.db
+    .prepare('SELECT id, name FROM courses WHERE semester = (SELECT MAX(semester) FROM courses) ORDER BY name')
+    .all() as unknown as { id: string; name: string }[];
+  if (courses.length === 0) {
+    header(7, '教材檔案摘要');
+    ok('目前沒有課程資料，略過');
+    header(8, '老師公告摘要');
+    ok('目前沒有課程資料，略過');
+    return;
+  }
+  const pick = async (message: string, prior: string[]): Promise<Set<string>> => {
+    const was = new Set(prior);
+    return new Set(
+      await p.checkbox({
+        message,
+        choices: courses.map((c) => ({ name: c.name, value: c.id, checked: was.has(c.id) })),
+        theme: checkboxTheme,
+      }),
+    );
+  };
+  header(7, '教材檔案摘要');
+  const materials = await pick('啟用「教材檔案摘要」的課程（沒有剔選的課程只顯示標題）', d.materials);
+  applySummaries(ctx, courses, materials, new Set(d.announcements));
+  saved(`教材檔案摘要：${countText(materials.size)}`);
+
+  header(8, '老師公告摘要');
+  const announcements = await pick('啟用「老師公告摘要」的課程（沒有剔選的課程只顯示標題）', d.announcements);
+  applySummaries(ctx, courses, materials, announcements);
+  saved(`老師公告摘要：${countText(announcements.size)}`);
 }

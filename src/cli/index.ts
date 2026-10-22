@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { dataRoot } from '../config/paths.js';
 import { logout } from './auth.js';
 import {
   ackCommand,
@@ -20,8 +21,8 @@ import {
   rulesListCommand,
   rulesTestCommand,
 } from './commands/rules.js';
-import { daemonLoop, reloadCommand, runTick, syncCommand } from './commands/sync.js';
-import { CliExit, createContext } from './context.js';
+import { daemonLoop, reloadCommand, runHandler, syncHandler } from './commands/sync.js';
+import { CliExit, createContext, createReadContext, createSetUpContext, isSetUp } from './context.js';
 import {
   announcementsText,
   courseText,
@@ -77,7 +78,12 @@ program
   .command('logout')
   .description('刪除 session 及已保存的密碼')
   .action(async () => {
-    await logout(createContext());
+    const root = dataRoot();
+    if (!isSetUp(root)) {
+      write('尚未設定，沒有需要登出的資料');
+      return;
+    }
+    await logout(createContext({ root }));
     write('已登出，session 及已保存的密碼都已刪除');
   });
 
@@ -87,9 +93,8 @@ program
   .option('--force', '即使剛同步過也再同步一次')
   .option('--json', '以 JSON 輸出')
   .action(async (o: { force?: boolean; json?: boolean }) => {
-    const ctx = createContext();
     const printer = o.json ? undefined : progressPrinter();
-    const r = await syncCommand(ctx, { ...(o.force ? { force: true } : {}), ...(printer ? { onProgress: printer } : {}) });
+    const { ctx, outcome: r } = await syncHandler({ ...(o.force ? { force: true } : {}), ...(printer ? { onProgress: printer } : {}) });
     if (printer) process.stderr.write('\n');
     out(o.json, r, () => (r.skipped ? (r.reason ?? '略過') : r.report ? formatSummary(r.report, summaryExtras(ctx.db, ctx.now())) : ''));
   });
@@ -98,15 +103,14 @@ program
   .command('run')
   .description('給 cron 使用：到點才同步，並檢查提醒')
   .action(async () => {
-    const ctx = createContext();
-    await runTick(ctx);
+    await runHandler();
   });
 
 program
   .command('daemon')
   .description('常駐執行，每 5 分鐘做一次 run')
   .action(async () => {
-    const ctx = createContext();
+    const ctx = createSetUpContext();
     const ac = new AbortController();
     for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => ac.abort());
     warn('ilearn daemon 已啟動，按 Ctrl-C 結束');
@@ -119,7 +123,7 @@ program
   .option('--yes', '不再詢問，直接推送')
   .option('--json', '以 JSON 輸出')
   .action(async (o: { yes?: boolean; json?: boolean }) => {
-    const ctx = createContext();
+    const ctx = createSetUpContext();
     const isTTY = Boolean(process.stdin.isTTY);
     const r = await reloadCommand(ctx, {
       ...(o.yes ? { yes: true } : {}),
@@ -137,7 +141,7 @@ program
   .description('未完成的作業及影片')
   .option('--json', '以 JSON 輸出')
   .action((o: { json?: boolean }) => {
-    const r = tasksCommand(createContext());
+    const r = tasksCommand(createReadContext());
     out(o.json, r, () => tasksText(r));
   });
 
@@ -150,7 +154,7 @@ const events = program
   .option('--since <時間>', '只列出此時間之後偵測到的事件（ISO 格式）')
   .option('--json', '以 JSON 輸出')
   .action((o: { deliverable?: boolean; agent?: string; type?: string; since?: string; json?: boolean }) => {
-    const r = eventsCommand(createContext(), o);
+    const r = eventsCommand(createReadContext(), o);
     out(o.json, r, () => eventsText(r));
   });
 events
@@ -158,7 +162,7 @@ events
   .description('標記該 agent 已處理到此事件')
   .option('--json', '以 JSON 輸出')
   .action((agent: string, eventId: string, o: { json?: boolean }) => {
-    const r = ackCommand(createContext(), agent, eventId);
+    const r = ackCommand(createSetUpContext(), agent, eventId);
     out(o.json, r, () => `${agent} 已處理到 ${eventId}`);
   });
 
@@ -167,7 +171,7 @@ program
   .description('課程列表')
   .option('--json', '以 JSON 輸出')
   .action((o: { json?: boolean }) => {
-    const r = coursesCommand(createContext());
+    const r = coursesCommand(createReadContext());
     out(o.json, r, () => coursesText(r));
   });
 
@@ -176,7 +180,7 @@ program
   .description('單一課程的全部資料')
   .option('--json', '以 JSON 輸出')
   .action((id: string, o: { json?: boolean }) => {
-    const r = courseCommand(createContext(), id);
+    const r = courseCommand(createReadContext(), id);
     out(o.json, r, () => courseText(r));
   });
 
@@ -187,7 +191,7 @@ program
   .option('--course <id>', '只列出指定課程')
   .option('--json', '以 JSON 輸出')
   .action((o: { category?: string; course?: string; json?: boolean }) => {
-    const r = announcementsCommand(createContext(), o);
+    const r = announcementsCommand(createReadContext(), o);
     out(o.json, r, () => announcementsText(r));
   });
 
@@ -197,7 +201,7 @@ program
   .option('--course <id>', '只列出指定課程')
   .option('--json', '以 JSON 輸出')
   .action((o: { course?: string; json?: boolean }) => {
-    const r = gradesCommand(createContext(), o);
+    const r = gradesCommand(createReadContext(), o);
     out(o.json, r, () => gradesText(r));
   });
 
@@ -207,7 +211,7 @@ files
   .description('以檔名搜尋')
   .option('--json', '以 JSON 輸出')
   .action((kw: string, o: { json?: boolean }) => {
-    const r = filesSearchCommand(createContext(), kw);
+    const r = filesSearchCommand(createReadContext(), kw);
     out(o.json, r, () => filesText(r));
   });
 
@@ -217,7 +221,7 @@ file
   .description('輸出 .txt 或 .md 檔案的文字')
   .option('--json', '以 JSON 輸出')
   .action((id: string, o: { json?: boolean }) => {
-    const r = fileTextCommand(createContext(), id);
+    const r = fileTextCommand(createReadContext(), id);
     out(o.json, r, () => r.text);
   });
 
@@ -226,7 +230,7 @@ program
   .description('標記小組作業「隊員已交」（只能由本人在互動終端操作）')
   .option('--undo', '取消標記')
   .action((itemId: string, o: { undo?: boolean }) => {
-    const r = markTeammateCommand(createContext(), {
+    const r = markTeammateCommand(createSetUpContext(), {
       itemId,
       ...(o.undo ? { undo: true } : {}),
       isTTY: Boolean(process.stdin.isTTY),
@@ -240,7 +244,7 @@ rules
   .description('列出目前生效的規則')
   .option('--json', '以 JSON 輸出')
   .action((o: { json?: boolean }) => {
-    const r = rulesListCommand(createContext());
+    const r = rulesListCommand(createReadContext());
     out(o.json, r, () => r.map((x) => `${x.enabled ? '啟用' : '停用'}  ${x.id}  ${x.name}  ${x.action}`).join('\n'));
   });
 rules
@@ -248,7 +252,7 @@ rules
   .description('試算規則檔（預設 rules.yaml）與目前規則的差異，不會儲存')
   .option('--json', '以 JSON 輸出')
   .action((file: string | undefined, o: { json?: boolean }) => {
-    const v = rulesTestCommand(createContext(), file);
+    const v = rulesTestCommand(createReadContext(), file);
     out(o.json, v, () => formatValidation(v));
     if (!v.ok) process.exitCode = 1;
   });
@@ -258,7 +262,7 @@ rules
   .action(async () => {
     needTty('編輯規則');
     const { confirm } = await import('@inquirer/prompts');
-    const r = await rulesEditCommand(createContext(), {
+    const r = await rulesEditCommand(createSetUpContext(), {
       confirm: (preview) => {
         write(preview);
         return confirm({ message: '要儲存嗎？', default: true });
@@ -276,7 +280,7 @@ program
   .description('同步狀態、最近錯誤、首次同步進度')
   .option('--json', '以 JSON 輸出')
   .action((o: { json?: boolean }) => {
-    const r = statusCommand(createContext());
+    const r = statusCommand(createReadContext());
     out(o.json, r, () => statusText(r));
   });
 

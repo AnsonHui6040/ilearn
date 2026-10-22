@@ -13,7 +13,7 @@ import {
   type SyncReport,
 } from '../../sync/sync.js';
 import { withAuth } from '../auth.js';
-import { CliExit, reloadSettings, type CliContext } from '../context.js';
+import { CliExit, createSetUpContext, NOT_SET_UP, reloadSettings, type CliContext, type ContextOverrides } from '../context.js';
 import { clearLastError, writeLastError, writeProgress } from './state.js';
 
 const RECENT_MS = 120_000;
@@ -103,7 +103,7 @@ export async function runTick(
 ): Promise<TickResult> {
   const log = o.log ?? ((s: string): void => void process.stderr.write(`${s}\n`));
   if (!ctx.sessionPresent && ctx.username === null) {
-    throw new CliExit(1, '尚未設定，請先執行 ilearn setup');
+    throw new CliExit(2, NOT_SET_UP);
   }
   const now = ctx.now();
   const st = getSyncState(ctx.db);
@@ -190,4 +190,20 @@ export async function reloadCommand(
   }
   const pushed = commitReload(ctx.outbox, events);
   return { planned: events.length, pushed, reload_id: reloadId, cancelled: false };
+}
+
+/* ---------- 進入點：未設定時不建立任何檔案或事件 ---------- */
+
+type Over = Partial<ContextOverrides>;
+
+export async function syncHandler(
+  o: { force?: boolean; onProgress?: (p: SyncProgress) => void } = {},
+  over: Over = {},
+): Promise<{ ctx: CliContext; outcome: SyncOutcome }> {
+  const ctx = createSetUpContext(over);
+  return { ctx, outcome: await syncCommand(ctx, o) };
+}
+
+export async function runHandler(over: Over = {}, o: { jitterMs?: number; log?: (s: string) => void } = {}): Promise<TickResult> {
+  return runTick(createSetUpContext(over), o);
 }

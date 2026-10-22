@@ -1,4 +1,6 @@
-import { chmodSync, copyFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import type { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { loadSession } from '../auth/credentials.js';
 import { loadConfig } from '../config/config.js';
@@ -110,15 +112,14 @@ async function defaultFetchText(url: string): Promise<string> {
   return res.text();
 }
 
-export function createContext(o: Partial<ContextOverrides> = {}): CliContext {
-  const root = o.root ?? dataRoot();
-  ensureDir(root);
-  ensureDir(join(root, 'data'));
-  const dbFile = join(root, 'data', 'ilearn.sqlite3');
-  const db = openDb(dbFile);
-  for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) {
-    if (existsSync(f)) chmodSync(f, 0o600);
-  }
+export const NOT_SET_UP = '尚未設定，請先執行 ilearn setup';
+
+/** 已設定 = data/account.json 存在。 */
+export function isSetUp(root: string): boolean {
+  return existsSync(accountPath(root));
+}
+
+function build(root: string, db: DatabaseSync, outbox: Outbox, o: Partial<ContextOverrides>): CliContext {
   const config = loadConfig(root);
   const rules = loadRules(root);
   const account = readAccount(root);
@@ -129,7 +130,7 @@ export function createContext(o: Partial<ContextOverrides> = {}): CliContext {
     db,
     api,
     fetchText: o.fetchText ?? defaultFetchText,
-    outbox: new Outbox(root),
+    outbox,
     config,
     rules: rules.rules,
     root,
@@ -141,6 +142,37 @@ export function createContext(o: Partial<ContextOverrides> = {}): CliContext {
   if (rules.warning !== undefined) ctx.rulesWarning = rules.warning;
   if (o.relogin !== undefined) ctx.relogin = o.relogin;
   return ctx;
+}
+
+export function createContext(o: Partial<ContextOverrides> = {}): CliContext {
+  const root = o.root ?? dataRoot();
+  ensureDir(root);
+  ensureDir(join(root, 'data'));
+  const dbFile = join(root, 'data', 'ilearn.sqlite3');
+  const db = openDb(dbFile);
+  for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) {
+    if (existsSync(f)) chmodSync(f, 0o600);
+  }
+  return build(root, db, new Outbox(root), o);
+}
+
+/** 需要已設定帳號的指令使用：未設定時直接 exit code 2，不建立任何檔案或事件。 */
+export function createSetUpContext(o: Partial<ContextOverrides> = {}): CliContext {
+  const root = o.root ?? dataRoot();
+  if (!isSetUp(root)) throw new CliExit(2, NOT_SET_UP);
+  return createContext({ ...o, root });
+}
+
+/**
+ * 查詢指令使用：資料庫還不存在時改用記憶體資料庫與暫時的 outbox，
+ * 結果為空，且不會在資料目錄建立任何東西。
+ */
+export function createReadContext(o: Partial<ContextOverrides> = {}): CliContext {
+  const root = o.root ?? dataRoot();
+  if (existsSync(join(root, 'data', 'ilearn.sqlite3'))) return createContext({ ...o, root });
+  const tmp = mkdtempSync(join(tmpdir(), 'ilearn-empty-'));
+  process.once('exit', () => rmSync(tmp, { recursive: true, force: true }));
+  return build(root, openDb(':memory:'), new Outbox(tmp), { ...o, root });
 }
 
 export function absPath(root: string, rel: string | null): string | null {

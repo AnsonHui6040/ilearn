@@ -2,13 +2,14 @@ import {
   chooseBackend,
   deleteCredentials,
   loadPassword,
+  loadSession,
   saveSession,
   type CredentialBackend,
 } from '../auth/credentials.js';
 import { saveConfig } from '../config/config.js';
 import { makeEvent } from '../events/outbox.js';
 import { ApiError, createApi } from '../ilearn/api.js';
-import { login } from '../ilearn/auth.js';
+import { checkSession, login } from '../ilearn/auth.js';
 import { createHttp } from '../ilearn/http.js';
 import { toTaipeiIso } from '../time.js';
 import { CliExit, removeAccount, writeAccount, type CliContext } from './context.js';
@@ -42,6 +43,17 @@ async function defaultRelogin(ctx: CliContext): Promise<boolean> {
   } catch {
     // 驗證碼、密碼已變更或網路問題都視為無法自動重新登入
     return false;
+  }
+}
+
+/** 已保存的 session 是否仍可用；沒有 session、網路不通都視為不可用。 */
+export async function savedSessionUser(ctx: CliContext): Promise<{ userId: number } | null> {
+  const cookies = loadSession(ctx.root);
+  if (cookies === null || ctx.username === null) return null;
+  try {
+    return await checkSession(createHttp({ cookies }));
+  } catch {
+    return null;
   }
 }
 

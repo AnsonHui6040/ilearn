@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '../src/ilearn/api.js';
 import { upsertFile, upsertItem, type StoredFile, type StoredItem } from '../src/db/repo.js';
 import { runSync } from '../src/sync/sync.js';
-import { CliExit, createContext, loadRules, type CliContext } from '../src/cli/context.js';
+import { CliExit, createContext, createReadContext, loadRules, type CliContext } from '../src/cli/context.js';
 import {
   ackCommand,
   announcementsCommand,
@@ -20,8 +20,18 @@ import {
   tasksCommand,
 } from '../src/cli/commands/query.js';
 import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
-import { reloadCommand, runTick, syncCommand } from '../src/cli/commands/sync.js';
-import { detectEnvironment, formatProgress, formatSummary, summaryExtras } from '../src/cli/setup.js';
+import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
+import {
+  detectEnvironment,
+  formatProgress,
+  formatSummary,
+  KEYS_HELP_CHECKBOX,
+  KEYS_HELP_SELECT,
+  setupDefaults,
+  stepHeader,
+  summaryExtras,
+} from '../src/cli/setup.js';
+import { DEFAULT_CONFIG } from '../src/config/config.js';
 import { tasksText } from '../src/cli/format.js';
 import { courseViewHtml, createFakeApi, standardData, type FakeData } from './helpers/fakeApi.js';
 
@@ -530,5 +540,54 @@ describe('pure setup helpers', () => {
     expect(formatProgress({ coursesDone: 2, coursesTotal: 5, filesDone: 3, filesTotal: 10, bytes: 2 * 1024 * 1024 })).toBe(
       '課程 2/5，檔案 3/10，已下載 2.0 MB',
     );
+  });
+});
+
+describe('not set up yet', () => {
+  const missingRoot = (): string => join(mkdtempSync(join(tmpdir(), 'ilearn-notsetup-')), 'root');
+
+  it('sync and run exit with code 2 and create nothing', async () => {
+    const root = missingRoot();
+    await expect(syncHandler({ force: true }, { root })).rejects.toMatchObject({ code: 2, message: '尚未設定，請先執行 ilearn setup' });
+    await expect(runHandler({ root })).rejects.toMatchObject({ code: 2, message: '尚未設定，請先執行 ilearn setup' });
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it('query context on a missing root creates nothing and returns empty results', () => {
+    const root = missingRoot();
+    const ctx = createReadContext({ root });
+    expect(tasksCommand(ctx).tasks).toEqual([]);
+    expect(tasksCommand(ctx).initial_sync_in_progress).toBe(true);
+    expect(eventsCommand(ctx, {})).toEqual([]);
+    expect(coursesCommand(ctx)).toEqual([]);
+    expect(statusCommand(ctx)).toBeDefined();
+    expect(existsSync(root)).toBe(false);
+  });
+});
+
+describe('setup layout helpers', () => {
+  it('stepHeader prints the exact three-line block', () => {
+    const rule = '\u2500'.repeat(30);
+    expect(stepHeader(5, 8, '要啟用的介面').split('\n')).toEqual([rule, '步驟 5／8\u3000要啟用的介面', rule]);
+  });
+
+  it('key help strings are Chinese', () => {
+    expect(KEYS_HELP_CHECKBOX).toBe('↑↓ 移動\u3000空白鍵 剔選\u3000a 全選\u3000i 反選\u3000Enter 確認');
+    expect(KEYS_HELP_SELECT).toBe('↑↓ 移動\u3000Enter 確認');
+  });
+
+  it('setupDefaults uses detection without a config and saved answers with one', () => {
+    expect(setupDefaults(null, 'vps')).toEqual({
+      environment: 'vps', folder: true, passwordSaved: false, materials: [], announcements: [],
+    });
+    expect(setupDefaults(null, 'desktop')).toMatchObject({ environment: 'desktop', folder: false });
+    const cfg = structuredClone(DEFAULT_CONFIG);
+    cfg.environment = 'vps';
+    cfg.interfaces.folder = false;
+    cfg.password_saved = true;
+    cfg.summaries.courses = { a: { materials: true, announcements: false }, b: { materials: false, announcements: true } };
+    expect(setupDefaults(cfg, 'desktop')).toEqual({
+      environment: 'vps', folder: false, passwordSaved: true, materials: ['a'], announcements: ['b'],
+    });
   });
 });
