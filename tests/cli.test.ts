@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/ilearn/api.js';
 import { listItems, upsertFile, upsertItem, type StoredFile, type StoredItem } from '../src/db/repo.js';
 import { runSync } from '../src/sync/sync.js';
@@ -24,6 +24,7 @@ import { toTaipeiIso } from '../src/time.js';
 import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
 import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
 import {
+  askRules,
   DEFAULT_WEBHOOK_URL,
   deliverySummary,
   detectEnvironment,
@@ -665,5 +666,57 @@ describe('setup layout helpers', () => {
     expect(setupDefaults(cfg, 'desktop')).toEqual({
       environment: 'vps', folder: false, passwordSaved: true, materials: ['a'], announcements: ['b'],
     });
+  });
+});
+
+describe('setup rules step', () => {
+  function fakePrompts(checks: string[][], confirms: boolean[]) {
+    const calls = { checkbox: 0, confirm: [] as string[] };
+    return {
+      calls,
+      p: {
+        checkbox: (() => Promise.resolve(checks[calls.checkbox++] ?? [])) as never,
+        confirm: ((o: { message: string }) => {
+          calls.confirm.push(o.message);
+          return Promise.resolve(confirms.shift() ?? false);
+        }) as never,
+      },
+    };
+  }
+  const quiet = () => vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+  it('asks again before disabling every rule, and keeps rules when declined', async () => {
+    const { ctx, root } = mk();
+    const out = quiet();
+    const all = ctx.rules.map((r) => r.id);
+    const f = fakePrompts([[], all], [false]);
+    await askRules(ctx, f.p);
+    out.mockRestore();
+    expect(f.calls.checkbox).toBe(2);
+    expect(f.calls.confirm).toEqual(['全部規則都會停用，新公告不會推送給 agent，確定嗎？']);
+    expect(existsSync(join(root, 'rules.yaml'))).toBe(false);
+    expect(ctx.rules.every((r) => r.enabled)).toBe(true);
+  });
+
+  it('disables every rule only after confirmation', async () => {
+    const { ctx, root } = mk();
+    const out = quiet();
+    const f = fakePrompts([[]], [true]);
+    await askRules(ctx, f.p);
+    const printed = out.mock.calls.map((c) => String(c[0])).join('');
+    out.mockRestore();
+    expect(printed).toContain('通知規則啟用 0 條，停用 13 條');
+    expect(readFileSync(join(root, 'rules.yaml'), 'utf8')).not.toMatch(/enabled: true/);
+    expect(ctx.rules.every((r) => !r.enabled)).toBe(true);
+  });
+
+  it('does not ask for confirmation when at least one rule stays enabled', async () => {
+    const { ctx } = mk();
+    const out = quiet();
+    const f = fakePrompts([['exam']], []);
+    await askRules(ctx, f.p);
+    out.mockRestore();
+    expect(f.calls.confirm).toEqual([]);
+    expect(ctx.rules.filter((r) => r.enabled).map((r) => r.id)).toEqual(['exam']);
   });
 });
