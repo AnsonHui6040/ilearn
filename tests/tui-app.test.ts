@@ -1,10 +1,11 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { CliExit, createContext, type CliContext } from '../src/cli/context.js';
 import { setSyncState, upsertCourse, upsertItem } from '../src/db/repo.js';
-import { assertInteractive, defaultOpener, mapKey, runUi, type PromptDeps, type Term, type UiKey } from '../src/tui/app.js';
+import { assertInteractive, defaultOpener, mapKey, nodeTerm, runUi, type PromptDeps, type Term, type UiKey } from '../src/tui/app.js';
 
 const ESC = String.fromCharCode(27);
 const ENTER_ALT = `${ESC}[?1049h`;
@@ -225,5 +226,21 @@ describe('assertInteractive', () => {
     expect(() => assertInteractive(false, true)).toThrow(CliExit);
     expect(() => assertInteractive(true, false)).toThrow('介面需要在互動終端機執行');
     expect(() => assertInteractive(true, true)).not.toThrow();
+  });
+});
+
+describe('nodeTerm', () => {
+  it('receives keys again after a prompt paused the input', async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode: () => input });
+    const output = Object.assign(new PassThrough(), { columns: 100, rows: 30 });
+    const term = nodeTerm(input as never, output as never);
+    const got: string[] = [];
+    const stop = term.onKey((k) => void got.push(k));
+    input.pause(); // @inquirer/prompts 結束時會暫停 stdin
+    term.setRaw(true);
+    input.write('q');
+    await tick();
+    stop();
+    expect(got).toEqual(['q']);
   });
 });

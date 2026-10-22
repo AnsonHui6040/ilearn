@@ -72,9 +72,7 @@ export function defaultOpener(platform: NodeJS.Platform, env: NodeJS.ProcessEnv)
   };
 }
 
-export function nodeTerm(): Term {
-  const input = process.stdin;
-  const output = process.stdout;
+export function nodeTerm(input: NodeJS.ReadStream = process.stdin, output: NodeJS.WriteStream = process.stdout): Term {
   return {
     write: (s) => void output.write(s),
     size: () => ({ cols: output.columns ?? 80, rows: output.rows ?? 24 }),
@@ -98,7 +96,11 @@ export function nodeTerm(): Term {
       output.on('resize', fn);
       return () => void output.off('resize', fn);
     },
-    setRaw: (on) => void (input.isTTY && input.setRawMode(on)),
+    setRaw: (on) => {
+      if (input.isTTY) input.setRawMode(on);
+      // @inquirer/prompts 結束時會暫停 stdin，回到介面要重新讀取按鍵
+      if (on) input.resume();
+    },
   };
 }
 
