@@ -30,11 +30,28 @@ export function makeEvent(p: MakeEventInput): IlearnEvent {
   };
 }
 
+export type Channel = 'hook' | 'webhook';
+
 interface HookStatus {
   ok: boolean;
   attempts: number;
   last_attempt: string;
+  last_error?: string;
 }
+
+const MINUTE = 60_000;
+/** 第 n 次失敗後要等多久才再試；之後一律 60 分鐘。 */
+const BACKOFF_MS = [5, 10, 20, 40, 60].map((m) => m * MINUTE);
+/** cron 每 5 分鐘一次，容許少許提早，避免剛好差幾秒而多等一輪。 */
+const BACKOFF_SLACK_MS = 30_000;
+/** deliver_after 超過這個時間仍未送出就放棄；outbox 仍保留事件。 */
+export const GIVE_UP_MS = 24 * 60 * MINUTE;
+
+export function backoffMs(attempts: number): number {
+  return BACKOFF_MS[Math.min(Math.max(attempts, 1), BACKOFF_MS.length) - 1]!;
+}
+
+const hookKey = (channel: Channel, eventId: string): string => `${channel}:${eventId}`;
 
 interface State {
   dedupe: string[];
@@ -156,23 +173,51 @@ export class Outbox {
     writeSecureFile(this.cursorPath(agent), JSON.stringify({ last_event_id: eventId }));
   }
 
-  pendingHooks(now: Date = new Date()): IlearnEvent[] {
-    return this.readAll().filter(
-      (e) =>
-        e.delivery !== 'record' &&
-        Date.parse(e.deliver_after) <= now.getTime() &&
-        this.hooks[e.event_id]?.ok !== true,
-    );
+  /**
+   * 該通道現在要送的事件：非 record、deliver_after 已到且未超過 24 小時、
+   * 未成功過，失敗過的要等 backoff 時間過後才再試。
+   */
+  pendingHooks(channel: Channel, now: Date = new Date()): IlearnEvent[] {
+    const t = now.getTime();
+    return this.readAll().filter((e) => {
+      if (e.delivery === 'record') return false;
+      const due = Date.parse(e.deliver_after);
+      if (due > t || t - due > GIVE_UP_MS) return false;
+      const st = this.hooks[hookKey(channel, e.event_id)];
+      if (st === undefined) return true;
+      if (st.ok) return false;
+      return t >= Date.parse(st.last_attempt) + backoffMs(st.attempts) - BACKOFF_SLACK_MS;
+    });
   }
 
-  markHook(eventId: string, ok: boolean, now: Date = new Date()): void {
-    const prev = this.hooks[eventId];
-    this.hooks[eventId] = {
+  markHook(channel: Channel, eventId: string, ok: boolean, now: Date = new Date(), error?: string): void {
+    const key = hookKey(channel, eventId);
+    const prev = this.hooks[key];
+    this.hooks[key] = {
       ok,
       attempts: (prev?.attempts ?? 0) + 1,
       last_attempt: toTaipeiIso(now),
+      ...(ok || error === undefined ? {} : { last_error: error.slice(0, 200) }),
     };
     this.saveState();
+  }
+
+  /** 供 status 顯示：重試中與已放棄的數量，以及最近一次錯誤。 */
+  hookStats(channel: Channel, now: Date = new Date()): { retrying: number; gave_up: number; last_error: string | null } {
+    const t = now.getTime();
+    const byId = new Map(this.readAll().map((e) => [e.event_id, e]));
+    let retrying = 0;
+    let gaveUp = 0;
+    let last: HookStatus | null = null;
+    for (const [key, st] of Object.entries(this.hooks)) {
+      if (st.ok || !key.startsWith(`${channel}:`)) continue;
+      const e = byId.get(key.slice(channel.length + 1));
+      if (e === undefined) continue;
+      if (t - Date.parse(e.deliver_after) > GIVE_UP_MS) gaveUp++;
+      else retrying++;
+      if (last === null || st.last_attempt > last.last_attempt) last = st;
+    }
+    return { retrying, gave_up: gaveUp, last_error: last?.last_error ?? null };
   }
 
   renderMarkdown(): void {

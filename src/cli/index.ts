@@ -276,6 +276,14 @@ rules
   });
 
 program
+  .command('mcp')
+  .description('以 stdio 啟動 MCP server，供支援 MCP 的 agent 讀取資料')
+  .action(async () => {
+    const { serveStdio } = await import('../mcp/server.js');
+    await serveStdio();
+  });
+
+program
   .command('status')
   .description('同步狀態、最近錯誤、首次同步進度')
   .option('--json', '以 JSON 輸出')

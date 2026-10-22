@@ -6,6 +6,7 @@ import { saveConfig, type Config } from '../config/config.js';
 import { writeSecureFile } from '../config/paths.js';
 import { getSyncState, listFiles, listItems } from '../db/repo.js';
 import { AuthError } from '../ilearn/auth.js';
+import { webhookUrlError } from '../events/dispatch.js';
 import { stringifyRules } from '../rules/yaml.js';
 import type { SyncProgress, SyncReport } from '../sync/sync.js';
 import { toTaipeiIso } from '../time.js';
@@ -80,6 +81,15 @@ export function formatFetchDone(initial: boolean, p: SyncProgress): string {
 }
 
 const yn = (v: boolean): string => (v ? 'Y' : 'N');
+
+export const DEFAULT_WEBHOOK_URL = 'http://127.0.0.1:8787/ilearn';
+
+export function deliverySummary(d: Config['delivery']): string {
+  const parts = ['outbox 檔案'];
+  if (d.hook.enabled) parts.push(`本機指令 hook（${d.hook.command}）`);
+  if (d.webhook.enabled) parts.push(`本機 webhook（${d.webhook.url}）`);
+  return parts.join('、');
+}
 
 const shortTime = (iso: string): string => iso.slice(5, 16).replace('T', ' ');
 
@@ -376,16 +386,40 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
   saved(ctx.config.interfaces.folder ? '終端機、文件夾（Markdown 檢視）' : '終端機');
 
   header(5, '推送方式');
-  await p.checkbox({
+  const dl = ctx.config.delivery;
+  const ways = await p.checkbox({
     message: '推送方式',
     choices: [
       { name: 'outbox 檔案（必備）', value: 'outbox', checked: true },
-      { name: '本機指令 hook（Phase 3 提供）', value: 'hook', disabled: true },
-      { name: '本機 webhook（Phase 3 提供）', value: 'webhook', disabled: true },
+      { name: '本機指令 hook（事件 JSON 經 stdin 傳入）', value: 'hook', checked: dl.hook.enabled },
+      { name: '本機 webhook（POST 到 localhost）', value: 'webhook', checked: dl.webhook.enabled },
     ],
     theme: checkboxTheme,
   });
-  say();
+  const next: Config['delivery'] = structuredClone(dl);
+  next.hook.enabled = ways.includes('hook');
+  next.webhook.enabled = ways.includes('webhook');
+  if (next.hook.enabled) {
+    next.hook.command = (
+      await p.input({
+        message: '每則推送事件要執行的指令',
+        ...(dl.hook.command ? { default: dl.hook.command } : {}),
+        validate: (v: string) => v.trim() !== '' || '請輸入指令',
+      })
+    ).trim();
+  }
+  if (next.webhook.enabled) {
+    next.webhook.url = (
+      await p.input({
+        message: 'webhook 網址',
+        default: dl.webhook.url || DEFAULT_WEBHOOK_URL,
+        validate: (v: string) => webhookUrlError(v.trim()) ?? true,
+      })
+    ).trim();
+  }
+  ctx.config.delivery = next;
+  saveConfig(ctx.config, ctx.root);
+  saved(deliverySummary(next));
 
   header(6, '通知規則');
   const enabled = await p.checkbox({

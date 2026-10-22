@@ -1,7 +1,6 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { writeSecureFile } from '../../config/paths.js';
 import { getSyncState } from '../../db/repo.js';
+import { dispatchPending, type DispatchResult } from '../../events/dispatch.js';
+import type { Channel } from '../../events/outbox.js';
 import { isSyncDue, randomJitterMs } from '../../events/schedule.js';
 import type { IlearnApi } from '../../ilearn/api.js';
 import {
@@ -92,9 +91,25 @@ export async function syncCommand(
 export interface TickResult {
   synced: boolean;
   reminders: number;
+  delivery: Record<Channel, DispatchResult>;
 }
 
-const HOOK_NOTICE = 'hook／webhook 於 Phase 3 提供，目前只寫入 outbox';
+const CHANNEL_NAME: Record<Channel, string> = { hook: '本機指令 hook', webhook: '本機 webhook' };
+
+/** 把到期事件交給 hook／webhook；失敗只記錄，下一輪按 backoff 重試，outbox 不受影響。 */
+export async function deliverCommand(
+  ctx: CliContext,
+  log: (s: string) => void = (s): void => void process.stderr.write(`${s}\n`),
+): Promise<Record<Channel, DispatchResult>> {
+  const r = await dispatchPending(ctx.outbox, ctx.config.delivery, ctx.now());
+  for (const ch of ['hook', 'webhook'] as const) {
+    if (r[ch].failed > 0) {
+      const err = ctx.outbox.hookStats(ch, ctx.now()).last_error;
+      log(`${CHANNEL_NAME[ch]}有 ${r[ch].failed} 則送出失敗，稍後重試${err ? `（${err}）` : ''}`);
+    }
+  }
+  return r;
+}
 
 /** cron／daemon 的一次執行：到點才同步，提醒計時每次都跑。 */
 export async function runTick(
@@ -121,15 +136,9 @@ export async function runTick(
   }
 
   const reminders = await runReminderTick(ctx);
-
-  const hooks = ctx.config.delivery;
-  const marker = join(ctx.root, 'data', '.hook_notice');
-  if ((hooks.hook.enabled || hooks.webhook.enabled) && !existsSync(marker)) {
-    log(HOOK_NOTICE);
-    writeSecureFile(marker, '1');
-  }
+  const delivery = await deliverCommand(ctx, log);
   if (failure !== null) throw failure;
-  return { synced, reminders };
+  return { synced, reminders, delivery };
 }
 
 const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
@@ -189,6 +198,8 @@ export async function reloadCommand(
     }
   }
   const pushed = commitReload(ctx.outbox, events);
+  // 使用者主動按 Reload，夜間也即時送出
+  await deliverCommand(ctx);
   return { planned: events.length, pushed, reload_id: reloadId, cancelled: false };
 }
 
@@ -201,7 +212,9 @@ export async function syncHandler(
   over: Over = {},
 ): Promise<{ ctx: CliContext; outcome: SyncOutcome }> {
   const ctx = createSetUpContext(over);
-  return { ctx, outcome: await syncCommand(ctx, o) };
+  const outcome = await syncCommand(ctx, o);
+  await deliverCommand(ctx);
+  return { ctx, outcome };
 }
 
 export async function runHandler(over: Over = {}, o: { jitterMs?: number; log?: (s: string) => void } = {}): Promise<TickResult> {
