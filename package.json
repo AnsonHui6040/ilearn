@@ -1,0 +1,40 @@
+{
+  "name": "thu-ilearn",
+  "version": "0.1.0",
+  "description": "Sync Tunghai University iLearn (TronClass) to your machine",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ilearn": "dist/cli/index.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.4",
+    "@napi-rs/keyring": "^2.1.2",
+    "cheerio": "^1.2.0",
+    "commander": "^15.0.0",
+    "tough-cookie": "^6.0.2",
+    "ulid": "^3.0.2",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "ajv": "^8.20.0",
+    "eslint": "^10.13.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
+  }
+}
