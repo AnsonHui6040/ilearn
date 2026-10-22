@@ -1,9 +1,12 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { CliExit, createContext, type CliContext } from '../src/cli/context.js';
+import { CliExit, createContext, rulesPath, type CliContext } from '../src/cli/context.js';
+import { DEFAULT_RULES } from '../src/rules/engine.js';
+import { stringifyRules } from '../src/rules/yaml.js';
 import { setSyncState, upsertCourse, upsertItem } from '../src/db/repo.js';
 import { assertInteractive, defaultOpener, mapKey, nodeTerm, runUi, type PromptDeps, type Term, type UiKey } from '../src/tui/app.js';
 
@@ -109,16 +112,72 @@ describe('runUi', () => {
     expect(t.out.join('').endsWith(LEAVE_ALT)).toBe(true);
   });
 
-  it('restores the terminal and rethrows when something breaks', async () => {
+  it('shows an unexpected prompt error and stays open', async () => {
     const { ctx } = seeded();
     const t = fakeTerm();
     const boom: PromptDeps = { ...noPrompts, input: () => Promise.reject(new Error('boom')) };
     const done = runUi(ctx, t, deps({ prompts: boom }));
     await tick();
     for (const k of ['5', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k); // 夜間時段
-    await expect(done).rejects.toThrow('boom');
+    for (let i = 0; i < 5; i++) await tick();
+    expect(last(t)).toContain('boom');
+    t.press('q');
+    await done;
+    expect(t.out.join('').endsWith(LEAVE_ALT)).toBe(true);
+  });
+
+  it('restores the terminal and rethrows when a timer callback breaks', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const c = fakeClock();
+    const done = runUi(ctx, t, deps({ clock: c }));
+    await tick();
+    ctx.db.close();
+    c.fire();
+    await expect(done).rejects.toThrow();
     expect(t.out.join('').endsWith(LEAVE_ALT)).toBe(true);
     expect(t.raw.at(-1)).toBe(false);
+  });
+
+  it('quits on SIGTERM even while a prompt is open', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const hang: PromptDeps = { ...noPrompts, input: () => new Promise<string>(() => {}) };
+    const done = runUi(ctx, t, deps({ prompts: hang }));
+    await tick();
+    for (const k of ['5', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k);
+    await tick();
+    t.press('sigterm');
+    await done;
+    expect(t.out.join('').endsWith(LEAVE_ALT)).toBe(true);
+  });
+
+  it('shows rules.yaml edited outside the UI after the next refresh', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const c = fakeClock();
+    const done = runUi(ctx, t, deps({ clock: c }));
+    await tick();
+    writeFileSync(rulesPath(ctx.root), stringifyRules(DEFAULT_RULES.map((r) => ({ ...r, enabled: false }))));
+    c.fire();
+    t.press('3');
+    expect(last(t)).toContain('通知規則全部停用');
+    t.press('q');
+    await done;
+  });
+
+  it('ignores keys while the window is too small', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const done = runUi(ctx, t, deps());
+    await tick();
+    t.resize(30, 8);
+    for (const k of ['2', 'enter', 'space'] as const) t.press(k);
+    t.resize(100, 30);
+    expect(last(t)).toContain('需要處理');
+    expect(last(t)).not.toContain('[x]');
+    t.press('q');
+    await done;
   });
 
   it('opens a course from the course list and goes back with Esc', async () => {

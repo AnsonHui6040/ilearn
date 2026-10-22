@@ -87,6 +87,8 @@ export function openDb(file: string): DatabaseSync {
   const db = new DatabaseSync(file);
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
+  // cron 同步與介面同時使用時，等待鎖定而不是立即失敗
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec('CREATE TABLE IF NOT EXISTS meta (schema_version INTEGER NOT NULL)');
   const row = db.prepare('SELECT schema_version AS v FROM meta').get() as { v: number } | undefined;
   let current = row?.v ?? 0;

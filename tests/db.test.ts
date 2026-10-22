@@ -188,3 +188,13 @@ describe('db', () => {
     }
   });
 });
+
+describe('concurrent access', () => {
+  it('waits for a busy database instead of failing at once', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ilearn-db-busy-'));
+    const db = openDb(join(dir, 'x.sqlite3'));
+    expect(db.prepare('PRAGMA busy_timeout').get()).toMatchObject({ timeout: 5000 });
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

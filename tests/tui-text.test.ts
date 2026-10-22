@@ -43,3 +43,18 @@ describe('wrap', () => {
     expect(wrap('', 20)).toEqual(['']);
   });
 });
+
+const hasControl = (s: string): boolean => Array.from(s).some((ch) => {
+  const cp = ch.codePointAt(0) ?? 0;
+  return cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);
+});
+
+describe('control characters from iLearn text', () => {
+  it('fit and wrap never pass on newlines, tabs or escape sequences', () => {
+    const ESC = String.fromCharCode(27);
+    const out = fit(`a\tb${ESC}[2Jc\nd`, 20);
+    expect(hasControl(out)).toBe(false);
+    expect(strWidth(out)).toBe(20);
+    for (const l of wrap('第一行\n第二行\r第三行', 40)) expect(hasControl(l)).toBe(false);
+  });
+});

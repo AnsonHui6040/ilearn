@@ -38,9 +38,14 @@ export function strWidth(s: string): number {
   return w;
 }
 
+/** 換行、tab、跳脫字元等控制字元改成空白，避免老師貼上的內容影響畫面。 */
+const isControl = (cp: number): boolean => cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);
+export const clean = (s: string): string => Array.from(s, (ch) => (isControl(ch.codePointAt(0) ?? 0) ? ' ' : ch)).join('');
+
 /** 補空白或截斷（以「…」結尾）成恰好 w 格。 */
-export function fit(s: string, w: number): string {
+export function fit(raw: string, w: number): string {
   if (w <= 0) return '';
+  const s = clean(raw);
   const total = strWidth(s);
   if (total <= w) return s + ' '.repeat(w - total);
   let out = '';
@@ -55,7 +60,8 @@ export function fit(s: string, w: number): string {
 }
 
 /** 依寬度分行，不截斷內容。 */
-export function wrap(s: string, w: number): string[] {
+export function wrap(raw: string, w: number): string[] {
+  const s = clean(raw);
   const out: string[] = [];
   let cur = '';
   let used = 0;

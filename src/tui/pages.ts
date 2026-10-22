@@ -34,6 +34,8 @@ const OFFSET_LABEL: Record<string, string> = {
 };
 export const offsetLabel = (o: string): string => OFFSET_LABEL[o] ?? o;
 
+/** 依原文換行分段後再依寬度分行。 */
+const paragraphs = (s: string, w: number): string[] => s.split(/\r\n|\r|\n/).flatMap((l) => wrap(l, w));
 const short = (iso: string | null): string => (iso === null ? '' : iso.slice(5, 16).replace('T', ' '));
 const head = (text: string, style: Style = 'bold'): Row => ({ text, style });
 const dim = (text: string): Row => ({ text, style: 'dim' });
@@ -209,7 +211,7 @@ function sectionRows(s: TuiState, d: TuiData, x: Detail, section: number, width:
       if (!x.grades.length) return [dim('  尚未公布')];
       return x.grades.flatMap((g): Row[] => [
         { text: `  ${g.title}  ${g.score ?? ''}`, key: g.id },
-        ...(g.feedback ? wrap(g.feedback, Math.max(10, width - 8)).map((l) => dim(`      ${l}`)) : []),
+        ...(g.feedback ? paragraphs(g.feedback, Math.max(10, width - 8)).map((l) => dim(`      ${l}`)) : []),
       ]);
     default:
       if (!x.info_fields.length) return empty();
@@ -339,7 +341,7 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
       return [
         head('介面啟用'),
         { text: '  終端機：啟用（必備）' },
-        { text: `  文件夾（Markdown 檢視）：${d.config.interfaces.folder ? '啟用' : '停用'}` },
+        { text: `  資料夾（Markdown 檢視）：${d.config.interfaces.folder ? '啟用' : '停用'}` },
         dim('  網頁與桌面 app 尚未提供'),
         { text: '' },
         { text: '  修改', key: 'interfaces', activate: { prompt: { kind: 'interfaces' } } },
@@ -382,7 +384,7 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         { text: '  登出（刪除 session 與已保存的密碼）', key: 'logout', activate: { run: 'logout' } },
       ];
     default:
-      return [head('Reset'), dim('  全部設定回復預設，同步資料、檔案、帳號保留'), { text: '  按 Enter 重設', key: 'reset', activate: { confirm: [{ kind: 'reset' }] } }];
+      return [head('Reset'), dim('  全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留'), { text: '  按 Enter 重設', key: 'reset', activate: { confirm: [{ kind: 'reset' }] } }];
   }
 }
 
@@ -408,7 +410,7 @@ function systemPage(s: TuiState, d: TuiData): Page {
 
 function detailPage(view: Extract<View, { kind: 'detail' }>, cols: number): Page {
   const w = Math.max(10, cols - 4);
-  const rows: Row[] = [head(view.title), ...view.lines.flatMap((l) => wrap(l, w).map((x): Row => ({ text: x })))];
+  const rows: Row[] = [head(view.title), ...view.lines.flatMap((l) => paragraphs(l, w)).map((x): Row => ({ text: x }))];
   if (view.target) {
     rows.push({ text: '' }, { text: view.target.kind === 'url' ? `在瀏覽器開啟：${view.target.url}` : `開啟檔案：${view.target.path}`, key: 'open', activate: { open: view.target } });
   }

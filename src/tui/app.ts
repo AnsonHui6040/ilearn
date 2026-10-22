@@ -6,18 +6,19 @@ import { logout } from '../cli/auth.js';
 import { DEFAULT_WEBHOOK_URL, formatProgress, runLogin } from '../cli/setup.js';
 import { webhookUrlError } from '../events/dispatch.js';
 import type { Rule } from '../rules/engine.js';
-import { CliExit, type CliContext } from '../cli/context.js';
+import { CliExit, reloadSettings, type CliContext } from '../cli/context.js';
 import type { Delivery } from '../types.js';
 import {
   applyChanges, applyCourseRuleAction, applyDelivery, applyInterfaces, applyQuietHours, applyReminderOffsets,
   OFFSET_CHOICES, parseKeywords, previewChanges, previewRule, ruleIdError, saveRule,
 } from './actions.js';
 import { courseDetail, loadTuiData, type TuiData } from './data.js';
-import { bodyRows, renderFrame, visibleStart } from './frame.js';
+import { bodyRows, MIN_COLS, MIN_ROWS, renderFrame, visibleStart } from './frame.js';
 import { bannerFor, buildPage, offsetLabel, type PageSources } from './pages.js';
 import { initialState, normalize, reduce, type Effect, type Key, type OpenTarget, type Prompt, type RunKind, type TuiState } from './state.js';
 
-export type UiKey = Key | 'ctrl-c';
+/** sigterm：程序收到 SIGTERM，即使正在問答也要離開並還原終端。 */
+export type UiKey = Key | 'ctrl-c' | 'sigterm';
 
 export interface Term {
   write(s: string): void;
@@ -89,7 +90,7 @@ export function nodeTerm(input: NodeJS.ReadStream = process.stdin, output: NodeJ
         const k = mapKey(str, key);
         if (k !== null) fn(k);
       };
-      const term = (): void => fn('ctrl-c');
+      const term = (): void => fn('sigterm');
       input.on('keypress', h);
       process.on('SIGTERM', term);
       input.resume();
@@ -172,6 +173,8 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
   };
 
   const refresh = (message: string | null = state.message): void => {
+    // 規則檔與設定檔可能在介面外被修改
+    reloadSettings(ctx);
     data = loadTuiData(ctx);
     state = { ...state, message };
     render();
@@ -187,7 +190,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     } catch (e) {
       if (e instanceof CliExit) message = e.message;
       else if (isPromptExit(e)) message = '已取消';
-      else throw e;
+      else message = `發生錯誤：${e instanceof Error ? e.message : String(e)}`;
     } finally {
       enter();
       busy = false;
@@ -204,6 +207,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
   /** 在終端逐項修改或新增規則；儲存前先顯示試算。 */
   const editRule = async (ruleId: string | null): Promise<string | null> => {
     const { prompts } = deps;
+    reloadSettings(ctx);
     const old = ruleId === null ? undefined : ctx.rules.find((r) => r.id === ruleId);
     if (ruleId !== null && !old) return `找不到通知規則 ${ruleId}`;
     const id = old?.id ?? (await prompts.input({ message: '規則代碼（小寫英文、數字、底線）', validate: (v) => ruleIdError(ctx.rules, v.trim()) ?? true })).trim();
@@ -287,11 +291,11 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
         message: '要啟用的介面',
         choices: [
           { name: '終端機（必備）', value: 'terminal', checked: true, disabled: '必備' },
-          { name: '文件夾（Markdown 檢視）', value: 'folder', checked: data.config.interfaces.folder },
+          { name: '資料夾（Markdown 檢視）', value: 'folder', checked: data.config.interfaces.folder },
         ],
       });
       applyInterfaces(ctx, picked.includes('folder'));
-      return picked.includes('folder') ? '已啟用：終端機、文件夾' : '已啟用：終端機';
+      return picked.includes('folder') ? '已啟用：終端機、資料夾' : '已啟用：終端機';
     }
     const action = await prompts.select<Delivery | 'inherit'>({
       message: '這條規則在本科的推送等級',
@@ -376,30 +380,46 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
   };
 
   enter();
+  // 意外結束時仍還原終端
+  const onExit = (): void => leave();
+  process.once('exit', onExit);
   let stopKeys = (): void => {};
   let stopResize = (): void => {};
   let stopClock = (): void => {};
   try {
     await new Promise<void>((resolve, reject) => {
-      const onKey = (k: UiKey): void => {
+      /** callback 內的例外一律交給 reject，讓 finally 還原終端。 */
+      const guard = (fn: () => void): void => {
+        try {
+          fn();
+        } catch (e) {
+          reject(e);
+        }
+      };
+      const onKey = (k: UiKey): void => guard(() => {
+        if (k === 'sigterm') return resolve();
         if (busy) return;
         if (k === 'ctrl-c') return resolve();
+        const size = term.size();
+        // 視窗太小時看不到內容，只接受離開
+        if ((size.cols < MIN_COLS || size.rows < MIN_ROWS) && k !== 'q') return;
         const p = page();
-        const r = reduce(state, k, p.panes, Math.max(1, bodyRows(term.size(), bannerFor(data).length) - 1));
+        const r = reduce(state, k, p.panes, Math.max(1, bodyRows(size, bannerFor(data).length) - 1));
         state = r.state;
         if (r.effect?.type === 'quit') return resolve();
         if (!r.effect) return render();
         run(r.effect).catch(reject);
-      };
+      });
       stopKeys = term.onKey(onKey);
-      stopResize = term.onResize(() => !busy && render());
-      stopClock = deps.clock.every(60_000, () => !busy && refresh());
+      stopResize = term.onResize(() => guard(() => !busy && render()));
+      stopClock = deps.clock.every(60_000, () => guard(() => !busy && refresh()));
       render();
     });
   } finally {
     stopClock();
     stopResize();
     stopKeys();
+    process.off('exit', onExit);
     leave();
   }
 }

@@ -370,7 +370,7 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
     message: '要啟用的介面',
     choices: [
       { name: '終端機', value: 'terminal', checked: true },
-      { name: '文件夾（Markdown 檢視）', value: 'folder', checked: d.folder },
+      { name: '資料夾（Markdown 檢視）', value: 'folder', checked: d.folder },
       { name: '網頁（後續階段提供）', value: 'web', disabled: true },
       { name: '桌面 app（後續階段提供）', value: 'desktop', disabled: true },
     ],
@@ -383,7 +383,7 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
     desktop: false,
   };
   saveConfig(ctx.config, ctx.root);
-  saved(ctx.config.interfaces.folder ? '終端機、文件夾（Markdown 檢視）' : '終端機');
+  saved(ctx.config.interfaces.folder ? '終端機、資料夾（Markdown 檢視）' : '終端機');
 
   header(5, '推送方式');
   const dl = ctx.config.delivery;

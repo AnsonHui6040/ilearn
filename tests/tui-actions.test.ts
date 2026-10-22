@@ -96,7 +96,7 @@ describe('previewChanges', () => {
       '取消「隊員已交」：作業二',
       `會計學「${r0.name}」：停用`,
       `會計學「${r0.name}」：啟用`,
-      '全部設定回復預設，同步資料、檔案、帳號保留',
+      '全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留',
     ]);
   });
 
@@ -441,5 +441,19 @@ describe('delivery and interfaces', () => {
     expect(loadConfig(ctx.root).interfaces).toEqual({ terminal: true, folder: false, web: false, desktop: false });
     applyInterfaces(ctx, true);
     expect(ctx.config.interfaces.folder).toBe(true);
+  });
+});
+
+describe('reset backup', () => {
+  it('backs up config.yaml and rules.yaml before resetting', () => {
+    const ctx = mk();
+    applyQuietHours(ctx, '23:00', '06:00');
+    saveRule(ctx, { ...structuredClone(DEFAULT_RULES[0]!), any: ['自訂關鍵詞'] });
+    const oldCfg = readFileSync(join(ctx.root, 'config.yaml'), 'utf8');
+    const oldRules = readFileSync(rulesPath(ctx.root), 'utf8');
+    applyChanges(ctx, [{ kind: 'reset' }]);
+    expect(readFileSync(join(ctx.root, 'config.yaml.bak'), 'utf8')).toBe(oldCfg);
+    expect(readFileSync(join(ctx.root, 'rules.yaml.bak'), 'utf8')).toBe(oldRules);
+    expect(previewChanges(ctx, [{ kind: 'reset' }]).join('\n')).toContain('config.yaml.bak');
   });
 });

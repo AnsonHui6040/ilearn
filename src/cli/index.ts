@@ -282,6 +282,8 @@ program
     const { assertInteractive, defaultDeps, nodeTerm, runUi } = await import('../tui/app.js');
     assertInteractive(Boolean(process.stdin.isTTY), Boolean(process.stdout.isTTY));
     await runUi(createSetUpContext(), nodeTerm(), await defaultDeps());
+    // 收到 SIGTERM 時同步或登入可能仍在進行，介面關閉後直接結束程序
+    process.exit();
   });
 
 program

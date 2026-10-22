@@ -1,3 +1,5 @@
+import { chmodSync, copyFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { writeSecureFile } from '../config/paths.js';
 import { DEFAULT_CONFIG, saveConfig, type Config } from '../config/config.js';
 import { CliExit, reloadSettings, rulesPath, type CliContext } from '../cli/context.js';
@@ -55,7 +57,7 @@ export function previewChanges(ctx: CliContext, changes: Change[]): string[] {
         lines.push(`${courseName(ctx, c.courseId)}「${ruleName(ctx.rules, c.ruleId)}」：${onOff(c.enabled)}`);
         break;
       case 'reset':
-        lines.push('全部設定回復預設，同步資料、檔案、帳號保留');
+        lines.push('全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留');
         break;
     }
   }
@@ -86,6 +88,16 @@ function ruleOverride(cfg: Config, courseId: string, ruleId: string): RuleOverri
   const course = (cfg.course_overrides[courseId] ??= {});
   const rules = (course.rules ??= {});
   return (rules[ruleId] ??= {});
+}
+
+/** Reset 前把目前的設定檔與規則檔複製為 .bak。 */
+function backupSettings(root: string): void {
+  for (const name of ['config.yaml', 'rules.yaml']) {
+    const from = join(root, name);
+    if (!existsSync(from)) continue;
+    copyFileSync(from, `${from}.bak`);
+    chmodSync(`${from}.bak`, 0o600);
+  }
 }
 
 export function applyChanges(ctx: CliContext, changes: Change[]): { applied: number; skipped: string[] } {
@@ -144,6 +156,7 @@ export function applyChanges(ctx: CliContext, changes: Change[]): { applied: num
     }
   }
 
+  if (changes.some((c) => c.kind === 'reset')) backupSettings(ctx.root);
   if (cfgDirty) saveConfig(cfg, ctx.root);
   if (rulesDirty) writeRules(ctx, rules);
   reloadSettings(ctx);

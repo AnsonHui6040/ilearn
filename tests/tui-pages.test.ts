@@ -201,7 +201,20 @@ describe('5 系統設定 actions', () => {
   });
 
   it('shows whether the folder view is on', () => {
-    expect(rows(3).map((r) => r.text).join('\n')).toContain('文件夾（Markdown 檢視）：');
+    expect(rows(3).map((r) => r.text).join('\n')).toContain('資料夾（Markdown 檢視）：');
+  });
+});
+
+describe('詳細畫面', () => {
+  it('shows each line of a multi-line body on its own row', () => {
+    const ctx = seeded();
+    const view: View = { kind: 'detail', title: '公告', lines: ['第一行\n第二行'], target: null };
+    const out = show(ctx, onTab(3, [view]), 100);
+    const a = out.findIndex((l) => l.includes('第一行'));
+    expect(a).toBeGreaterThan(0);
+    expect(out[a]).not.toContain('第二行');
+    expect(out[a + 1]).toContain('第二行');
+    expect(out).toHaveLength(60);
   });
 });
 
