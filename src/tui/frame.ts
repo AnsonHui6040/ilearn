@@ -150,7 +150,18 @@ export function renderFrame(f: FrameInput, size: { cols: number; rows: number },
     }
   }
 
-  out.push(sep, segs([{ text: ' ' }, { text: f.message ?? '', style: 'red' }], cols, color));
-  out.push(segs([{ text: ' ' }, { text: f.help, style: 'dim' }], cols, color));
+  out.push(sep);
+  const helpLine = (t: string): string => segs([{ text: ' ' }, { text: t, style: 'dim' }], cols, color);
+  if (f.message === null && strWidth(f.help) > cols - 1) {
+    // 窄終端：按鍵說明借用訊息列分成兩行，以兩個空白分隔的項目為單位
+    const items = f.help.split('  ');
+    let first = '';
+    while (items.length > 0 && strWidth(first ? `${first}  ${items[0]}` : (items[0] ?? '')) <= cols - 1) {
+      first = first ? `${first}  ${items.shift()}` : (items.shift() ?? '');
+    }
+    out.push(helpLine(first), helpLine(items.join('  ')));
+  } else {
+    out.push(segs([{ text: ' ' }, { text: f.message ?? '', style: 'red' }], cols, color), helpLine(f.help));
+  }
   return out;
 }

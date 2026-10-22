@@ -85,6 +85,14 @@ describe('renderFrame', () => {
     expect(out.at(-2)).toContain('尚有 2 項未確認');
   });
 
+  it('splits a long help line over two lines on narrow terminals when there is no message', () => {
+    const help = '1-5 分頁 Tabs  ↑↓ 移動 Move  Space 剔選 Select  Enter 確認 OK  q 離開 Quit';
+    const out = renderFrame(input({ help }), { cols: 60, rows: 24 }, false);
+    expect(out.some((l) => l.includes('…'))).toBe(false);
+    expect(out.at(-2)).toContain('1-5 分頁 Tabs');
+    expect(out.at(-1)).toContain('q 離開 Quit');
+  });
+
   it('shows banner lines under the header', () => {
     const out = renderFrame(input({ banner: ['首次同步進行中'] }), { cols: 100, rows: 24 }, false);
     expect(out[3]).toContain('首次同步進行中');
