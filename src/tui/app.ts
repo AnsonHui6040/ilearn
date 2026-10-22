@@ -1,14 +1,21 @@
 import { spawn } from 'node:child_process';
 import { emitKeypressEvents } from 'node:readline';
 import { rulesEditCommand } from '../cli/commands/rules.js';
-import { reloadCommand } from '../cli/commands/sync.js';
+import { deliverCommand, reloadCommand, syncCommand } from '../cli/commands/sync.js';
+import { logout } from '../cli/auth.js';
+import { DEFAULT_WEBHOOK_URL, formatProgress, runLogin } from '../cli/setup.js';
+import { webhookUrlError } from '../events/dispatch.js';
+import type { Rule } from '../rules/engine.js';
 import { CliExit, type CliContext } from '../cli/context.js';
 import type { Delivery } from '../types.js';
-import { applyChanges, applyCourseRuleAction, applyQuietHours, applyReminderOffsets, OFFSET_CHOICES, previewChanges } from './actions.js';
+import {
+  applyChanges, applyCourseRuleAction, applyDelivery, applyInterfaces, applyQuietHours, applyReminderOffsets,
+  OFFSET_CHOICES, parseKeywords, previewChanges, previewRule, ruleIdError, saveRule,
+} from './actions.js';
 import { courseDetail, loadTuiData, type TuiData } from './data.js';
 import { bodyRows, renderFrame, visibleStart } from './frame.js';
 import { bannerFor, buildPage, offsetLabel, type PageSources } from './pages.js';
-import { initialState, normalize, reduce, type Effect, type Key, type OpenTarget, type Prompt, type TuiState } from './state.js';
+import { initialState, normalize, reduce, type Effect, type Key, type OpenTarget, type Prompt, type RunKind, type TuiState } from './state.js';
 
 export type UiKey = Key | 'ctrl-c';
 
@@ -22,8 +29,8 @@ export interface Term {
 
 export interface PromptDeps {
   input(o: { message: string; default?: string; validate?: (v: string) => true | string }): Promise<string>;
-  checkbox<T>(o: { message: string; choices: { name: string; value: T; checked?: boolean }[] }): Promise<T[]>;
-  select<T>(o: { message: string; choices: { name: string; value: T }[] }): Promise<T>;
+  checkbox<T>(o: { message: string; choices: { name: string; value: T; checked?: boolean; disabled?: boolean | string }[] }): Promise<T[]>;
+  select<T>(o: { message: string; choices: { name: string; value: T }[]; default?: T }): Promise<T>;
   confirm(o: { message: string; default?: boolean }): Promise<boolean>;
 }
 
@@ -188,6 +195,68 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     refresh(message);
   };
 
+  const LEVELS: { name: string; value: Delivery }[] = [
+    { name: '即時推送 force_push', value: 'force_push' },
+    { name: '推送 push', value: 'push' },
+    { name: '只記錄 record', value: 'record' },
+  ];
+
+  /** 在終端逐項修改或新增規則；儲存前先顯示試算。 */
+  const editRule = async (ruleId: string | null): Promise<string | null> => {
+    const { prompts } = deps;
+    const old = ruleId === null ? undefined : ctx.rules.find((r) => r.id === ruleId);
+    if (ruleId !== null && !old) return `找不到通知規則 ${ruleId}`;
+    const id = old?.id ?? (await prompts.input({ message: '規則代碼（小寫英文、數字、底線）', validate: (v) => ruleIdError(ctx.rules, v.trim()) ?? true })).trim();
+    const name = (await prompts.input({ message: '名稱', ...(old ? { default: old.name } : {}), validate: (v) => v.trim() !== '' || '請輸入名稱' })).trim();
+    const words = (message: string, now: string[] | undefined) =>
+      prompts.input({ message: `${message}（以逗號或「、」分隔，可留空）`, ...(now?.length ? { default: now.join('、') } : {}) });
+    const any = parseKeywords(await words('任一關鍵詞', old?.any));
+    const all = parseKeywords(await words('全部都要出現的關鍵詞', old?.all));
+    const none = parseKeywords(await words('排除詞', old?.none));
+    const action = await prompts.select<Delivery>({ message: '推送等級', choices: LEVELS, default: old?.action ?? 'push' });
+    const rule: Rule = {
+      id, name, enabled: old?.enabled ?? true, scope: old?.scope ?? 'all', fields: old?.fields ?? ['title', 'body'],
+      any, all, none, regex: old?.regex ?? [], action,
+    };
+    if (any.length + all.length + rule.regex.length === 0) throw new CliExit(1, '至少要有一個關鍵詞，沒有儲存');
+    term.write(`\r\n${previewRule(ctx, rule).join('\r\n')}\r\n`);
+    if (!(await prompts.confirm({ message: '要儲存嗎？', default: true }))) return '沒有儲存';
+    saveRule(ctx, rule);
+    return `已儲存規則「${name}」`;
+  };
+
+  const editDelivery = async (): Promise<string | null> => {
+    const { prompts } = deps;
+    const dl = data.config.delivery;
+    const ways = await prompts.checkbox({
+      message: '推送方式',
+      choices: [
+        { name: 'outbox 檔案（必備）', value: 'outbox', checked: true, disabled: '必備' },
+        { name: '本機指令 hook（事件 JSON 經 stdin 傳入）', value: 'hook', checked: dl.hook.enabled },
+        { name: '本機 webhook（POST 到 localhost）', value: 'webhook', checked: dl.webhook.enabled },
+      ],
+    });
+    const next = structuredClone(dl);
+    next.hook.enabled = ways.includes('hook');
+    next.webhook.enabled = ways.includes('webhook');
+    if (next.hook.enabled) {
+      next.hook.command = await prompts.input({
+        message: '每則推送事件要執行的指令',
+        ...(dl.hook.command ? { default: dl.hook.command } : {}),
+        validate: (v) => v.trim() !== '' || '請輸入指令',
+      });
+    }
+    if (next.webhook.enabled) {
+      next.webhook.url = await prompts.input({
+        message: 'webhook 網址',
+        default: dl.webhook.url || DEFAULT_WEBHOOK_URL,
+        validate: (v) => webhookUrlError(v.trim()) ?? true,
+      });
+    }
+    applyDelivery(ctx, next);
+    return '已儲存推送方式';
+  };
+
   const ask = async (p: Prompt): Promise<string | null> => {
     const { prompts } = deps;
     if (p.kind === 'quietHours') {
@@ -211,6 +280,19 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
       applyReminderOffsets(ctx, p.courseId, picked);
       return `截止提醒已改為 ${picked.map(offsetLabel).join('、')}`;
     }
+    if (p.kind === 'editRule') return editRule(p.ruleId);
+    if (p.kind === 'delivery') return editDelivery();
+    if (p.kind === 'interfaces') {
+      const picked = await prompts.checkbox({
+        message: '要啟用的介面',
+        choices: [
+          { name: '終端機（必備）', value: 'terminal', checked: true, disabled: '必備' },
+          { name: '文件夾（Markdown 檢視）', value: 'folder', checked: data.config.interfaces.folder },
+        ],
+      });
+      applyInterfaces(ctx, picked.includes('folder'));
+      return picked.includes('folder') ? '已啟用：終端機、文件夾' : '已啟用：終端機';
+    }
     const action = await prompts.select<Delivery | 'inherit'>({
       message: '這條規則在本科的推送等級',
       choices: [
@@ -222,6 +304,22 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     });
     applyCourseRuleAction(ctx, p.courseId, p.ruleId, action === 'inherit' ? null : action);
     return '已更新推送等級';
+  };
+
+  const runOutside = async (what: RunKind): Promise<string | null> => {
+    if (what === 'sync') {
+      term.write('同步中，請稍候\r\n');
+      const r = await syncCommand(ctx, { force: true, onProgress: (p) => term.write(`\r${formatProgress(p)}   `) });
+      await deliverCommand(ctx, (s) => term.write(`\r\n${s}`));
+      return r.skipped ? (r.reason ?? '略過') : '同步完成';
+    }
+    if (what === 'login') {
+      await runLogin(ctx);
+      return '已重新登入';
+    }
+    if (!(await deps.prompts.confirm({ message: '要登出嗎？session 與已保存的密碼都會刪除', default: false }))) return '沒有登出';
+    await logout(ctx);
+    return '已登出，session 與已保存的密碼都已刪除';
   };
 
   const run = async (effect: Effect): Promise<void> => {
@@ -268,6 +366,9 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
           });
           return r.saved ? '已儲存 rules.yaml' : '沒有儲存';
         });
+        return;
+      case 'run':
+        await outside(() => runOutside(effect.what));
         return;
       case 'quit':
         return;

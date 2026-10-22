@@ -226,7 +226,7 @@ function coursePage(s: TuiState, d: TuiData, view: Extract<View, { kind: 'course
   const counts = sectionCounts(x);
   const left: Row[] = SECTIONS.map((name, i) => {
     const n = counts[i] ?? 0;
-    return { text: n ? `  ${name} ${n}` : `  ${name} 沒有`, key: `sec:${i}`, ...(n ? {} : { style: 'dim' as const }) };
+    return { text: n ? `  ${name} ${n}` : `  ${name} 沒有`, key: `sec:${i}`, activate: { focusRight: true }, ...(n ? {} : { style: 'dim' as const }) };
   });
   const section = Math.max(0, Math.min(SECTIONS.length - 1, s.cursor[0]));
   const row = d.courses.find((c) => c.id === view.courseId) ?? d.archived.flatMap((a) => a.courses).find((c) => c.id === view.courseId);
@@ -281,7 +281,7 @@ function remindersPage(d: TuiData): Page {
 /* ---------- 4 課程設定 ---------- */
 
 function courseSettingsPage(s: TuiState, d: TuiData): Page {
-  const left: Row[] = [head('選擇課程'), ...d.courses.map((c): Row => ({ text: `  ${c.code} ${c.name}`, key: `cs:${c.id}` }))];
+  const left: Row[] = [head('選擇課程'), ...d.courses.map((c): Row => ({ text: `  ${c.code} ${c.name}`, key: `cs:${c.id}`, activate: { focusRight: true } }))];
   const c = d.courses[s.cursor[0] - 1] ?? d.courses[0];
   if (!c) return { panes: [left, [dim('還沒有課程資料')]], leftWidth: 34, help: HELP.twoPane };
   const ov = d.config.course_overrides[c.id] ?? {};
@@ -317,7 +317,7 @@ function courseSettingsPage(s: TuiState, d: TuiData): Page {
 
 /* ---------- 5 系統設定 ---------- */
 
-export const SYSTEM_ITEMS = ['Reload', '同步狀態', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', 'Reset'] as const;
+export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', 'Reset'] as const;
 
 function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
   const st = d.status;
@@ -332,12 +332,23 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         { text: `  檔案：已下載 ${st.files.done}，待下載 ${st.files.pending}，失敗 ${st.files.failed}，略過 ${st.files.skipped}` },
         ...(st.incomplete_courses.length ? [{ text: `  資料可能不完整：${st.incomplete_courses.join('、')}`, style: 'red' as const }] : []),
         ...(st.last_error ? [{ text: `  最近錯誤（${short(st.last_error.at)}）：${st.last_error.message}`, style: 'red' as const }] : []),
+        { text: '' },
+        { text: '  立即同步', key: 'sync', activate: { run: 'sync' } },
+      ];
+    case '介面啟用':
+      return [
+        head('介面啟用'),
+        { text: '  終端機：啟用（必備）' },
+        { text: `  文件夾（Markdown 檢視）：${d.config.interfaces.folder ? '啟用' : '停用'}` },
+        dim('  網頁與桌面 app 尚未提供'),
+        { text: '' },
+        { text: '  修改', key: 'interfaces', activate: { prompt: { kind: 'interfaces' } } },
       ];
     case '推送方式': {
       const ch = (name: string, x: typeof st.delivery.hook): Row => ({
         text: `  ${name}：${x.enabled ? '啟用' : '停用'}${x.retrying ? `，重試中 ${x.retrying} 則` : ''}${x.gave_up ? `，放棄 ${x.gave_up} 則` : ''}`,
       });
-      return [head('推送方式'), { text: '  outbox 檔案：啟用（必備）' }, ch('本機指令 hook', st.delivery.hook), ch('本機 webhook', st.delivery.webhook), dim('  hook 指令與 webhook 網址請在終端執行 ilearn setup 修改')];
+      return [head('推送方式'), { text: '  outbox 檔案：啟用（必備）' }, ch('本機指令 hook', st.delivery.hook), ch('本機 webhook', st.delivery.webhook), { text: '' }, { text: '  修改推送方式', key: 'delivery', activate: { prompt: { kind: 'delivery' } } }];
     }
     case '夜間時段':
       return [head('夜間時段'), dim('  這段時間的推送保存到結束時才送出；截止前 3 小時提醒照常即時推送'), { text: `  ${d.config.quiet_hours.start}–${d.config.quiet_hours.end}`, key: 'quiet', activate: { prompt: { kind: 'quietHours' } } }];
@@ -349,18 +360,26 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         head(`通知規則  啟用 ${on}／${d.rules.length}`),
         ...d.rules.map((r): Row => {
           const tick: Change = { kind: 'rule', ruleId: r.id, enabled: !r.enabled };
-          return { text: `  ${box(willBe(s, r.enabled, tick))} ${fit(r.id, 18)}${fit(r.name, 18)}${r.action}`, key: `rule:${r.id}`, tick };
+          return {
+            text: `  ${box(willBe(s, r.enabled, tick))} ${fit(r.id, 18)}${fit(r.name, 18)}${r.action}`,
+            key: `rule:${r.id}`,
+            tick,
+            activate: { prompt: { kind: 'editRule', ruleId: r.id } },
+          };
         }),
         { text: '' },
-        { text: '  以編輯器修改關鍵詞', key: 'edit', activate: { editRules: true } },
-        dim('  Space 剔選  Enter 先顯示試算（新增命中、不再命中）再確認'),
+        { text: '  新增規則', key: 'new-rule', activate: { prompt: { kind: 'editRule', ruleId: null } } },
+        { text: '  以編輯器修改全部規則（rules.yaml）', key: 'edit', activate: { editRules: true } },
+        dim('  Space 剔選啟用或停用，再按 Enter 確認；沒有剔選時 Enter 修改該規則的關鍵詞'),
       ];
     }
     case '帳號':
       return [
         head('帳號'),
         { text: `  ${st.username ? '已登入' : '尚未登入'}，${st.credential_saved ? '已保存密碼' : '未保存密碼'}` },
-        dim('  重新登入或刪除密碼請在終端執行 ilearn login、ilearn logout'),
+        { text: '' },
+        { text: '  重新登入', key: 'login', activate: { run: 'login' } },
+        { text: '  登出（刪除 session 與已保存的密碼）', key: 'logout', activate: { run: 'logout' } },
       ];
     default:
       return [head('Reset'), dim('  全部設定回復預設，同步資料、檔案、帳號保留'), { text: '  按 Enter 重設', key: 'reset', activate: { confirm: [{ kind: 'reset' }] } }];
@@ -368,7 +387,7 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
 }
 
 function systemPage(s: TuiState, d: TuiData): Page {
-  // 左欄按 Enter 直接執行該項的主要動作
+  // 左欄按 Enter：有主要動作的直接執行，其他移到右欄
   const leftAction: Partial<Record<(typeof SYSTEM_ITEMS)[number], Row['activate']>> = {
     Reload: { reload: true },
     夜間時段: { prompt: { kind: 'quietHours' } },
@@ -378,8 +397,7 @@ function systemPage(s: TuiState, d: TuiData): Page {
   const left: Row[] = [
     head('系統設定'),
     ...SYSTEM_ITEMS.map((t, i): Row => {
-      const activate = leftAction[t];
-      return { text: `  ${t}`, key: `sys:${i}`, ...(activate ? { activate } : {}) };
+      return { text: `  ${t}`, key: `sys:${i}`, activate: leftAction[t] ?? { focusRight: true } };
     }),
   ];
   const item = Math.max(0, Math.min(SYSTEM_ITEMS.length - 1, s.cursor[0] - 1));

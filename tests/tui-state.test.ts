@@ -139,3 +139,25 @@ describe('normalize', () => {
     expect(normalize(initialState(), [[{ text: '沒有' }]]).cursor[0]).toBe(0);
   });
 });
+
+describe('settings actions', () => {
+  it('enter on a row that leads to the right pane moves the focus there', () => {
+    const l: Row[] = [{ text: '同步狀態', key: 's', activate: { focusRight: true } }];
+    const r: Row[] = [{ text: 'x' }, { text: '立即同步', key: 'sync', activate: { run: 'sync' } }];
+    const s1 = press(start([l, r]), ['enter'], [l, r]).state;
+    expect(s1.focus).toBe(1);
+    expect(s1.cursor[1]).toBe(1);
+    expect(reduce(s1, 'enter', [l, r], 3).effect).toEqual({ type: 'run', what: 'sync' });
+  });
+
+  it('returns prompt effects for rule editing, delivery and interfaces', () => {
+    const rows: Row[] = [
+      { text: 'a', key: 'a', activate: { prompt: { kind: 'editRule', ruleId: null } } },
+      { text: 'b', key: 'b', activate: { prompt: { kind: 'delivery' } } },
+      { text: 'c', key: 'c', activate: { prompt: { kind: 'interfaces' } } },
+    ];
+    expect(press(start([rows]), ['enter'], [rows]).effect).toEqual({ type: 'prompt', prompt: { kind: 'editRule', ruleId: null } });
+    expect(press(start([rows]), ['down', 'enter'], [rows]).effect).toEqual({ type: 'prompt', prompt: { kind: 'delivery' } });
+    expect(press(start([rows]), ['down', 'down', 'enter'], [rows]).effect).toEqual({ type: 'prompt', prompt: { kind: 'interfaces' } });
+  });
+});

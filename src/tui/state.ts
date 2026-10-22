@@ -14,7 +14,13 @@ export type Change =
 export type Prompt =
   | { kind: 'quietHours' }
   | { kind: 'reminderOffsets'; courseId: string | null }
-  | { kind: 'courseRuleAction'; courseId: string; ruleId: string };
+  | { kind: 'courseRuleAction'; courseId: string; ruleId: string }
+  | { kind: 'editRule'; ruleId: string | null }
+  | { kind: 'delivery' }
+  | { kind: 'interfaces' };
+
+/** 需要暫時離開全螢幕執行的動作。 */
+export type RunKind = 'sync' | 'login' | 'logout';
 
 export type OpenTarget = { kind: 'url'; url: string } | { kind: 'file'; path: string };
 
@@ -30,6 +36,8 @@ export type Activate =
   | { prompt: Prompt }
   | { reload: true }
   | { editRules: true }
+  | { run: RunKind }
+  | { focusRight: true }
   | { confirm: Change[] };
 
 /** 畫面上的一列；有 key 的列才可選取。 */
@@ -63,6 +71,7 @@ export type Effect =
   | { type: 'prompt'; prompt: Prompt }
   | { type: 'reload' }
   | { type: 'editRules' }
+  | { type: 'run'; what: RunKind }
   | { type: 'quit' };
 
 export function changeKey(c: Change): string {
@@ -191,6 +200,8 @@ export function reduce(s0: TuiState, key: Key, panes: Row[][], pageRows: number)
       if ('prompt' in a) return { state: s, effect: { type: 'prompt', prompt: a.prompt } };
       if ('reload' in a) return { state: s, effect: { type: 'reload' } };
       if ('editRules' in a) return { state: s, effect: { type: 'editRules' } };
+      if ('run' in a) return { state: s, effect: { type: 'run', what: a.run } };
+      if ('focusRight' in a) return { state: panes.length < 2 ? s : normalize({ ...s, focus: 1 }, panes) };
       return { state: push(s, { kind: 'confirm', changes: a.confirm, fromTicks: false }) };
     }
   }

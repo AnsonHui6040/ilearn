@@ -11,6 +11,13 @@ import { stringifyRules } from '../src/rules/yaml.js';
 import {
   OFFSET_CHOICES,
   applyChanges,
+  applyDelivery,
+  applyInterfaces,
+  parseKeywords,
+  previewRule,
+  ruleIdError,
+  saveRule,
+  withRule,
   applyCourseRuleAction,
   applyQuietHours,
   applyReminderOffsets,
@@ -347,5 +354,92 @@ describe('reloadSettings', () => {
     applyReminderOffsets(ctx, null, ['P1D']);
     expect(ctx.config.quiet_hours).toEqual({ start: '01:00', end: '05:00' });
     expect(ctx.config.reminders.offsets).toEqual(['P1D']);
+  });
+});
+
+describe('rule editor', () => {
+  const exam = () => structuredClone(DEFAULT_RULES.find((r) => r.id === 'exam')!);
+
+  it('splits keywords on half-width and full-width commas and 、', () => {
+    expect(parseKeywords('考試, 期中考，小考、 quiz ,,')).toEqual(['考試', '期中考', '小考', 'quiz']);
+    expect(parseKeywords('  ')).toEqual([]);
+  });
+
+  it('checks a new rule id', () => {
+    expect(ruleIdError(DEFAULT_RULES, 'my_rule')).toBeNull();
+    expect(ruleIdError(DEFAULT_RULES, 'exam')).toBe('代碼已存在');
+    expect(ruleIdError(DEFAULT_RULES, 'My Rule')).toBe('代碼只能用小寫英文字母、數字與底線，並以字母開頭');
+  });
+
+  it('replaces a rule by id or appends a new one', () => {
+    const edited = { ...exam(), any: ['期末考'] };
+    expect(withRule(DEFAULT_RULES, edited).find((r) => r.id === 'exam')?.any).toEqual(['期末考']);
+    expect(withRule(DEFAULT_RULES, edited)).toHaveLength(DEFAULT_RULES.length);
+    const added = { ...exam(), id: 'field_trip', name: '校外教學' };
+    expect(withRule(DEFAULT_RULES, added).at(-1)?.id).toBe('field_trip');
+  });
+
+  it('previews which stored announcements would match before saving', () => {
+    const ctx = mk();
+    course(ctx, '1', '資料結構');
+    upsertItem(ctx.db, {
+      id: 'announcement:1', kind: 'announcement', course_id: '1', title: '下週戶外參訪', body: null, due_at: null, start_at: null,
+      url: null, completion: 'pending', teammate_hint: false, group: false, score: null, score_published: false, feedback: null,
+      categories: [], matched_rules: [], manual_categories: null, delivery: null, raw: '{}', first_seen_at: NOW.toISOString(), updated_at: NOW.toISOString(),
+    });
+    const lines = previewRule(ctx, { ...exam(), id: 'trip', name: '參訪', any: ['戶外參訪'], none: [] });
+    expect(lines.join('\n')).toContain('新增命中：下週戶外參訪（trip）');
+    expect(existsSync(rulesPath(ctx.root))).toBe(false);
+  });
+
+  it('saves the rule and reloads it', () => {
+    const ctx = mk();
+    saveRule(ctx, { ...exam(), any: ['期末考', 'final'] });
+    expect(ctx.rules.find((r) => r.id === 'exam')?.any).toEqual(['期末考', 'final']);
+    expect(parse(readFileSync(rulesPath(ctx.root), 'utf8'))).toHaveLength(DEFAULT_RULES.length);
+  });
+
+  it('refuses a rule without any keyword or regex', () => {
+    const ctx = mk();
+    expect(() => saveRule(ctx, { ...exam(), any: [], all: [], regex: [] })).toThrow('至少要有一個關鍵詞');
+    expect(existsSync(rulesPath(ctx.root))).toBe(false);
+  });
+
+  it('refuses to save over an invalid rules.yaml', () => {
+    const ctx = mk();
+    writeFileSync(rulesPath(ctx.root), '- id: [broken\n');
+    expect(() => saveRule(ctx, exam())).toThrow(CliExit);
+    expect(readFileSync(rulesPath(ctx.root), 'utf8')).toBe('- id: [broken\n');
+  });
+});
+
+describe('delivery and interfaces', () => {
+  it('saves hook and webhook settings', () => {
+    const ctx = mk();
+    applyDelivery(ctx, { hook: { enabled: true, command: 'my-agent notify' }, webhook: { enabled: true, url: 'http://127.0.0.1:8787/ilearn' } });
+    expect(loadConfig(ctx.root).delivery).toEqual({ hook: { enabled: true, command: 'my-agent notify' }, webhook: { enabled: true, url: 'http://127.0.0.1:8787/ilearn' } });
+    expect(ctx.config.delivery.hook.enabled).toBe(true);
+  });
+
+  it('rejects an empty hook command and a non-local webhook', () => {
+    const ctx = mk();
+    expect(() => applyDelivery(ctx, { hook: { enabled: true, command: ' ' }, webhook: { enabled: false, url: '' } })).toThrow('請輸入指令');
+    expect(() => applyDelivery(ctx, { hook: { enabled: false, command: '' }, webhook: { enabled: true, url: 'http://example.com/x' } })).toThrow(/只接受本機位址/);
+    expect(loadConfig(ctx.root).delivery).toEqual(DEFAULT_CONFIG.delivery);
+  });
+
+  it('keeps a disabled channel’s old command and address', () => {
+    const ctx = mk();
+    applyDelivery(ctx, { hook: { enabled: true, command: 'old-cmd' }, webhook: { enabled: false, url: '' } });
+    applyDelivery(ctx, { hook: { enabled: false, command: 'old-cmd' }, webhook: { enabled: false, url: '' } });
+    expect(loadConfig(ctx.root).delivery.hook).toEqual({ enabled: false, command: 'old-cmd' });
+  });
+
+  it('turns the folder view on and off; the terminal stays on', () => {
+    const ctx = mk();
+    applyInterfaces(ctx, false);
+    expect(loadConfig(ctx.root).interfaces).toEqual({ terminal: true, folder: false, web: false, desktop: false });
+    applyInterfaces(ctx, true);
+    expect(ctx.config.interfaces.folder).toBe(true);
   });
 });

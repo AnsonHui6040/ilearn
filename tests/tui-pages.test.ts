@@ -7,7 +7,7 @@ import { setSyncState, upsertCourse, upsertItem, type StoredItem } from '../src/
 import { courseDetail, loadTuiData } from '../src/tui/data.js';
 import { renderFrame, type TabId } from '../src/tui/frame.js';
 import { bannerFor, buildPage, type PageSources } from '../src/tui/pages.js';
-import { initialState, normalize, type TuiState, type View } from '../src/tui/state.js';
+import { initialState, normalize, type Row, type TuiState, type View } from '../src/tui/state.js';
 import { strWidth } from '../src/tui/text.js';
 
 const NOW = new Date('2026-10-22T04:00:00Z'); // 12:00 台北
@@ -159,7 +159,7 @@ describe('5 系統設定', () => {
   it('never shows the hook command or the webhook address', () => {
     const ctx = seeded();
     ctx.config.delivery = { hook: { enabled: true, command: 'secret-hook-cmd' }, webhook: { enabled: true, url: 'http://127.0.0.1:9/secret-path' } };
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= 9; i++) {
       const out = text(show(ctx, { ...onTab(5), cursor: [i, 0] }, 100));
       expect(out).not.toContain('secret-hook-cmd');
       expect(out).not.toContain('secret-path');
@@ -167,9 +167,41 @@ describe('5 系統設定', () => {
   });
 
   it('shows the rule list with checkboxes and the count of enabled rules', () => {
-    const out = text(show(seeded(), { ...onTab(5), cursor: [6, 0] }, 100));
+    const out = text(show(seeded(), { ...onTab(5), cursor: [7, 0] }, 100));
     expect(out).toContain('通知規則  啟用 13／13');
     expect(out).toContain('[x] exam');
+    expect(out).toContain('新增規則');
+    expect(out).toContain('以編輯器修改全部規則');
+  });
+});
+
+describe('5 系統設定 actions', () => {
+  const rows = (cursor: number): Row[] => {
+    const ctx = seeded();
+    const d = loadTuiData(ctx);
+    return buildPage({ ...onTab(5), cursor: [cursor, 0] }, d, 100, sources(ctx)).panes[1] ?? [];
+  };
+  const acts = (cursor: number) => rows(cursor).flatMap((r) => (r.activate ? [r.activate] : []));
+
+  it('offers sync, interfaces, delivery, rule editing, login and logout', () => {
+    expect(acts(2)).toContainEqual({ run: 'sync' });
+    expect(acts(3)).toContainEqual({ prompt: { kind: 'interfaces' } });
+    expect(acts(4)).toContainEqual({ prompt: { kind: 'delivery' } });
+    expect(acts(7)).toContainEqual({ prompt: { kind: 'editRule', ruleId: 'exam' } });
+    expect(acts(7)).toContainEqual({ prompt: { kind: 'editRule', ruleId: null } });
+    expect(acts(8)).toContainEqual({ run: 'login' });
+    expect(acts(8)).toContainEqual({ run: 'logout' });
+  });
+
+  it('enter on a left item without its own action moves into the right pane', () => {
+    const ctx = seeded();
+    const left = buildPage(onTab(5), loadTuiData(ctx), 100, sources(ctx)).panes[0] ?? [];
+    expect(left.find((r) => r.text.includes('同步狀態'))?.activate).toEqual({ focusRight: true });
+    expect(left.find((r) => r.text.includes('Reload'))?.activate).toEqual({ reload: true });
+  });
+
+  it('shows whether the folder view is on', () => {
+    expect(rows(3).map((r) => r.text).join('\n')).toContain('文件夾（Markdown 檢視）：');
   });
 });
 

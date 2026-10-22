@@ -115,7 +115,7 @@ describe('runUi', () => {
     const boom: PromptDeps = { ...noPrompts, input: () => Promise.reject(new Error('boom')) };
     const done = runUi(ctx, t, deps({ prompts: boom }));
     await tick();
-    for (const k of ['5', 'down', 'down', 'down', 'enter'] as const) t.press(k); // 夜間時段
+    for (const k of ['5', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k); // 夜間時段
     await expect(done).rejects.toThrow('boom');
     expect(t.out.join('').endsWith(LEAVE_ALT)).toBe(true);
     expect(t.raw.at(-1)).toBe(false);
@@ -170,7 +170,7 @@ describe('runUi', () => {
     const prompts: PromptDeps = { ...noPrompts, input: () => Promise.resolve(answers.shift() ?? '') };
     const done = runUi(ctx, t, deps({ prompts }));
     await tick();
-    for (const k of ['5', 'down', 'down', 'down', 'enter'] as const) t.press(k);
+    for (const k of ['5', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k);
     await tick();
     await tick();
     expect(ctx.config.quiet_hours).toEqual({ start: '23:00', end: '06:30' });
@@ -194,6 +194,85 @@ describe('runUi', () => {
     await tick();
     expect(ctx.db.prepare("SELECT completion FROM items WHERE id = 'assignment:1'").get()).toMatchObject({ completion: 'teammate_marked' });
     expect(last(t)).toContain('已套用 1 項');
+    t.press('q');
+    await done;
+  });
+});
+
+describe('settings prompts', () => {
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await tick();
+  };
+
+  it('edits the keywords of a rule after showing the trial', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const inputs = ['考試／測驗', '期末考、final', '', '成績'];
+    const prompts: PromptDeps = {
+      ...noPrompts,
+      input: () => Promise.resolve(inputs.shift() ?? ''),
+      select: (() => Promise.resolve('push')) as PromptDeps['select'],
+      confirm: () => Promise.resolve(true),
+    };
+    const done = runUi(ctx, t, deps({ prompts }));
+    await tick();
+    for (const k of ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'right', 'enter'] as const) t.press(k); // 通知規則 > exam
+    await settle();
+    const exam = ctx.rules.find((r) => r.id === 'exam');
+    expect(exam?.any).toEqual(['期末考', 'final']);
+    expect(exam?.none).toEqual(['成績']);
+    expect(t.out.join('')).toContain('規則有效');
+    expect(last(t)).toContain('已儲存規則「考試／測驗」');
+    t.press('q');
+    await done;
+  });
+
+  it('adds a new rule', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const inputs = ['field_trip', '校外教學', '參訪、校外教學', '', ''];
+    const prompts: PromptDeps = {
+      ...noPrompts,
+      input: () => Promise.resolve(inputs.shift() ?? ''),
+      select: (() => Promise.resolve('push')) as PromptDeps['select'],
+      confirm: () => Promise.resolve(true),
+    };
+    const done = runUi(ctx, t, deps({ prompts }));
+    await tick();
+    for (const k of ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'right', 'pagedown', 'pagedown', 'pagedown', 'pagedown', 'up', 'enter'] as const) t.press(k);
+    await settle();
+    expect(ctx.rules.at(-1)).toMatchObject({ id: 'field_trip', name: '校外教學', any: ['參訪', '校外教學'], enabled: true, action: 'push' });
+    t.press('q');
+    await done;
+  });
+
+  it('changes the delivery settings', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const prompts: PromptDeps = {
+      ...noPrompts,
+      checkbox: (() => Promise.resolve(['hook'])) as PromptDeps['checkbox'],
+      input: () => Promise.resolve('my-agent notify'),
+    };
+    const done = runUi(ctx, t, deps({ prompts }));
+    await tick();
+    for (const k of ['5', 'down', 'down', 'down', 'enter', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k); // 推送方式 > 修改推送方式
+    await settle();
+    expect(ctx.config.delivery.hook).toEqual({ enabled: true, command: 'my-agent notify' });
+    expect(last(t)).toContain('已儲存推送方式');
+    t.press('q');
+    await done;
+  });
+
+  it('turns the folder view off', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const prompts: PromptDeps = { ...noPrompts, checkbox: (() => Promise.resolve(['terminal'])) as PromptDeps['checkbox'] };
+    const done = runUi(ctx, t, deps({ prompts }));
+    await tick();
+    for (const k of ['5', 'down', 'down', 'enter', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k); // 介面啟用 > 修改
+    await settle();
+    expect(ctx.config.interfaces.folder).toBe(false);
     t.press('q');
     await done;
   });

@@ -4,7 +4,8 @@ import { CliExit, reloadSettings, rulesPath, type CliContext } from '../cli/cont
 import { formatValidation, validateRules } from '../cli/commands/rules.js';
 import { listItems, setCompletion } from '../db/repo.js';
 import { DEFAULT_RULES, type Rule } from '../rules/engine.js';
-import { stringifyRules } from '../rules/yaml.js';
+import { parseRulesYaml, stringifyRules } from '../rules/yaml.js';
+import { webhookUrlError } from '../events/dispatch.js';
 import { parseIsoDuration } from '../time.js';
 import type { Delivery } from '../types.js';
 import { displayName } from './data.js';
@@ -200,5 +201,60 @@ export function applyCourseRuleAction(ctx: CliContext, courseId: string, ruleId:
       ruleOverride(cfg, courseId, ruleId).action = action;
     }
     prune(cfg.course_overrides, courseId);
+  });
+}
+
+/* ---------- 規則編輯 ---------- */
+
+/** 以半形、全形逗號或「、」分隔的關鍵詞。 */
+export function parseKeywords(s: string): string[] {
+  return s.split(/[,，、]/).map((k) => k.trim()).filter((k) => k !== '');
+}
+
+export function ruleIdError(rules: Rule[], id: string): string | null {
+  if (!/^[a-z][a-z0-9_]{0,39}$/.test(id)) return '代碼只能用小寫英文字母、數字與底線，並以字母開頭';
+  return rules.some((r) => r.id === id) ? '代碼已存在' : null;
+}
+
+/** 依代碼取代規則，找不到時加在最後。 */
+export function withRule(rules: Rule[], rule: Rule): Rule[] {
+  return rules.some((r) => r.id === rule.id) ? rules.map((r) => (r.id === rule.id ? rule : r)) : [...rules, rule];
+}
+
+/** 儲存前試算：與目前規則比較，現有公告與作業的命中變化。不寫入任何東西。 */
+export function previewRule(ctx: CliContext, rule: Rule): string[] {
+  return formatValidation(validateRules(ctx, stringifyRules(withRule(ctx.rules, rule)))).split('\n');
+}
+
+export function saveRule(ctx: CliContext, rule: Rule): void {
+  reloadSettings(ctx);
+  if (ctx.rulesWarning !== undefined) throw new CliExit(1, `規則檔無效，未儲存：${ctx.rulesWarning}`);
+  if (rule.any.length + rule.all.length + rule.regex.length === 0) throw new CliExit(1, '至少要有一個關鍵詞');
+  const text = stringifyRules(withRule(ctx.rules, rule));
+  const parsed = parseRulesYaml(text);
+  if (!parsed.ok) throw new CliExit(1, `規則無效：${parsed.error}`);
+  writeSecureFile(rulesPath(ctx.root), text);
+  reloadSettings(ctx);
+}
+
+/* ---------- 推送方式、介面 ---------- */
+
+export function applyDelivery(ctx: CliContext, d: Config['delivery']): void {
+  const command = d.hook.command.trim();
+  const url = d.webhook.url.trim();
+  if (d.hook.enabled && command === '') throw new CliExit(1, '請輸入指令');
+  if (d.webhook.enabled) {
+    const err = webhookUrlError(url);
+    if (err !== null) throw new CliExit(1, err);
+  }
+  updateConfig(ctx, (cfg) => {
+    cfg.delivery = { hook: { enabled: d.hook.enabled, command }, webhook: { enabled: d.webhook.enabled, url } };
+  });
+}
+
+/** 終端機必備；網頁與桌面 app 尚未提供。 */
+export function applyInterfaces(ctx: CliContext, folder: boolean): void {
+  updateConfig(ctx, (cfg) => {
+    cfg.interfaces = { terminal: true, folder, web: false, desktop: false };
   });
 }
