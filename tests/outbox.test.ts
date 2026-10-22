@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Ajv } from 'ajv';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { makeEvent, Outbox } from '../src/events/outbox.js';
+import { backoffMs, GIVE_UP_MS, makeEvent, Outbox } from '../src/events/outbox.js';
 import type { IlearnEvent } from '../src/types.js';
 
 const quiet = { start: '00:00', end: '07:00' };
@@ -120,16 +120,45 @@ describe('Outbox', () => {
     const later = ev({ dedupe_key: 'l', detectedAt: new Date('2026-10-22T16:30:00Z') });
     [push, rec, later].forEach((e) => box.append(e));
     const now = new Date('2026-10-22T10:00:00Z');
-    expect(box.pendingHooks(now).map((e) => e.dedupe_key)).toEqual(['p']);
+    expect(box.pendingHooks('hook', now).map((e) => e.dedupe_key)).toEqual(['p']);
     const file = join(root, 'outbox', 'events', '2026-10-22.jsonl');
     const before = readFileSync(file, 'utf8').split('\n').length;
-    box.markHook(push.event_id, false, now);
-    expect(box.pendingHooks(now).map((e) => e.dedupe_key)).toEqual(['p']);
+    box.markHook('hook', push.event_id, false, now, 'exit code 1');
     expect(readFileSync(file, 'utf8').split('\n').length).toBe(before);
-    box.markHook(push.event_id, true, now);
-    expect(box.pendingHooks(now)).toEqual([]);
-    expect(new Outbox(root).pendingHooks(now)).toEqual([]);
-    expect(box.pendingHooks(new Date('2026-10-23T00:00:00Z')).map((e) => e.dedupe_key)).toEqual(['l']);
+    expect(box.pendingHooks('webhook', now).map((e) => e.dedupe_key)).toEqual(['p']);
+    box.markHook('hook', push.event_id, true, new Date(now.getTime() + 5 * 60_000));
+    expect(box.pendingHooks('hook', new Date(now.getTime() + 10 * 60_000))).toEqual([]);
+    expect(new Outbox(root).pendingHooks('hook', new Date(now.getTime() + 10 * 60_000))).toEqual([]);
+    expect(box.pendingHooks('hook', new Date('2026-10-23T00:00:00Z')).map((e) => e.dedupe_key)).toEqual(['l']);
+  });
+
+  it('hook retries back off 5, 10, 20, 40, then every 60 minutes', () => {
+    const push = ev({ dedupe_key: 'p' });
+    box.append(push);
+    const t0 = new Date('2026-10-22T04:00:00Z').getTime();
+    const at = (min: number): Date => new Date(t0 + min * 60_000);
+    const due = (min: number): boolean => box.pendingHooks('hook', at(min)).length === 1;
+    let last = 0;
+    for (const wait of [5, 10, 20, 40, 60, 60]) {
+      box.markHook('hook', push.event_id, false, at(last));
+      expect(due(last + wait - 1)).toBe(false);
+      expect(due(last + wait)).toBe(true);
+      last += wait;
+    }
+    expect(backoffMs(1)).toBe(5 * 60_000);
+    expect(backoffMs(9)).toBe(60 * 60_000);
+  });
+
+  it('gives up 24 hours after deliver_after but keeps the event in the outbox', () => {
+    const push = ev({ dedupe_key: 'p' });
+    box.append(push);
+    const t0 = Date.parse(push.deliver_after);
+    box.markHook('hook', push.event_id, false, new Date(t0), 'exit code 1');
+    expect(box.hookStats('hook', new Date(t0 + 60 * 60_000))).toEqual({ retrying: 1, gave_up: 0, last_error: 'exit code 1' });
+    const late = new Date(t0 + GIVE_UP_MS + 60_000);
+    expect(box.pendingHooks('hook', late)).toEqual([]);
+    expect(box.hookStats('hook', late)).toEqual({ retrying: 0, gave_up: 1, last_error: 'exit code 1' });
+    expect(box.read().map((e) => e.event_id)).toEqual([push.event_id]);
   });
 
   it('renders markdown, newest first, max 100', () => {

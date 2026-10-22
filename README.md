@@ -39,7 +39,7 @@ ilearn setup
 2. 輸入學號與密碼（輸入時不會顯示）。登入失敗會顯示原因並讓你重試。
 3. 選擇是否保存密碼。桌面環境存入系統憑證庫；VPS 會先顯示風險提醒，確認後以加密檔案保存（權限 0600）。選擇不保存時只保存 session，過期後需要執行 `ilearn login`。
 4. 開始第一次完整提取：本學期所有課程、作業、公告、考試、分數與教材檔案。過程在背景進行，不必等待。
-5. 提取期間完成其餘設定：啟用的介面、推送方式、通知規則、每科摘要。
+5. 提取期間完成其餘設定：啟用的介面、推送方式（outbox 檔案必備，可另選本機指令 hook 或本機 webhook）、通知規則、每科摘要。
 6. 顯示完成摘要：課程數、未完成作業、3 日內截止與考試、下載結果。
 
 第一次提取可以用 Ctrl-C 中斷，下次執行 `ilearn setup` 或 `ilearn sync` 會從中斷處繼續。第一次提取本身不會推送任何通知；要把目前需要處理的事項推送給 agent，請執行 `ilearn reload`。
@@ -53,6 +53,22 @@ ilearn setup
 ```
 
 `ilearn run` 每次都會檢查提醒，並且只在同步時間到了才連線 iLearn（07:00 到 24:00 每小時一次，另加 03:30，每次隨機延遲 0 到 5 分鐘）。如果想要常駐程序，可以改用 `ilearn daemon`。
+
+## 推送給 agent
+
+需要通知的事件一律寫入 `outbox/events/`，agent 可隨時用 `ilearn events --deliverable` 讀取。另外可以在 `ilearn setup` 第 5 步，或直接在 `config.yaml` 啟用主動推送：
+
+```yaml
+delivery:
+  hook:
+    enabled: true
+    command: my-agent notify   # 每則事件執行一次，事件 JSON 經標準輸入傳入
+  webhook:
+    enabled: true
+    url: http://127.0.0.1:8787/ilearn   # 只接受本機位址
+```
+
+`ilearn run`、`daemon`、`sync` 及 `reload` 結束時會送出到期的事件；`record` 等級不會送出。送不出去時依序等 5、10、20、40 分鐘，之後每 60 分鐘再試，超過 24 小時就放棄，事件仍保留在 outbox。`ilearn status` 會顯示重試中及已放棄的數量。
 
 ## 常用指令
 
@@ -73,7 +89,8 @@ ilearn setup
 | `ilearn files search <關鍵字>`、`ilearn file text <id>` | 以檔名搜尋；輸出 .txt 與 .md 的文字 |
 | `ilearn mark-teammate <item_id> [--undo]` | 標記小組作業「隊員已交」，只能由你在互動終端操作 |
 | `ilearn rules list`、`ilearn rules test [檔案]`、`ilearn rules edit` | 列出、試算、編輯關鍵詞規則 |
-| `ilearn status [--json]` | 同步狀態、最近錯誤、首次同步進度 |
+| `ilearn status [--json]` | 同步狀態、最近錯誤、首次同步進度、推送狀態 |
+| `ilearn mcp` | 以 stdio 啟動 MCP server，供支援 MCP 的 agent 使用 |
 
 加上 `--json` 時，標準輸出只會有一個 JSON 值；錯誤以 exit code 1 與標準錯誤輸出的中文訊息表示。登入過期且沒有保存密碼時 exit code 為 2。
 
@@ -103,7 +120,17 @@ files:
 
 ## 給 AI agent
 
-請看 [AGENTS.md](AGENTS.md)，內有指令、事件格式與 agent 權限。
+請看 [AGENTS.md](AGENTS.md)，內有指令、MCP 工具、事件格式與 agent 權限。支援 Skill 的 agent 可以使用 [SKILL.md](SKILL.md)。
+
+MCP 客戶端設定範例：
+
+```json
+{
+  "mcpServers": {
+    "thu-ilearn": { "command": "ilearn", "args": ["mcp"] }
+  }
+}
+```
 
 ## 開發
 

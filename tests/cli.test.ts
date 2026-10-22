@@ -22,6 +22,8 @@ import {
 import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
 import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
 import {
+  DEFAULT_WEBHOOK_URL,
+  deliverySummary,
   detectEnvironment,
   formatFetchDone,
   formatProgress,
@@ -278,6 +280,18 @@ describe('reload', () => {
     expect(new Set(batch.map((e) => e.reload_id))).toEqual(new Set([r.reload_id]));
   });
 
+  it('delivers to the hook immediately, even at night', async () => {
+    const env = await seeded();
+    env.clock.now = new Date('2026-10-22T17:00:00Z'); // 01:00 台北
+    const out = join(env.root, 'hook.jsonl');
+    env.ctx.config.delivery.hook = { enabled: true, command: `cat >> "${out}"` };
+    const r = await reloadCommand(env.ctx, { yes: true });
+    const lines = readFileSync(out, 'utf8').trim().split('\n');
+    expect(lines.length).toBeGreaterThanOrEqual(r.pushed);
+    const ids = new Set(lines.map((l) => (JSON.parse(l) as { reload_id?: string }).reload_id));
+    expect(ids.has(r.reload_id ?? '')).toBe(true);
+  });
+
   it('asks for confirmation and pushes nothing when declined', async () => {
     const env = await seeded();
     const r = await reloadCommand(env.ctx, { isTTY: true, confirm: () => Promise.resolve(false) });
@@ -346,13 +360,34 @@ describe('run', () => {
     expect(r.synced).toBe(true);
   });
 
-  it('logs the hook notice once when hook delivery is enabled', async () => {
+  it('runs the hook for each deliverable push event, once', async () => {
     const env = await seeded();
-    env.ctx.config.delivery.hook.enabled = true;
+    await reloadCommand(env.ctx, { yes: true });
+    const out = join(env.root, 'hook.jsonl');
+    env.ctx.config.delivery.hook = { enabled: true, command: `cat >> "${out}"` };
+    const r1 = await runTick(env.ctx, { jitterMs: 0 });
+    const pushable = eventsCommand(env.ctx, { deliverable: true }).filter((e) => e.delivery !== 'record');
+    expect(pushable.length).toBeGreaterThan(0);
+    expect(r1.delivery.hook).toEqual({ sent: pushable.length, failed: 0 });
+    const got = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { event_id: string });
+    expect(got.map((e) => e.event_id)).toEqual(pushable.map((e) => e.event_id));
+    const r2 = await runTick(env.ctx, { jitterMs: 0 });
+    expect(r2.delivery.hook.sent).toBe(0);
+  });
+
+  it('logs hook failures, shows them in status and keeps events in the outbox', async () => {
+    const env = await seeded();
+    await reloadCommand(env.ctx, { yes: true });
+    const before = eventsCommand(env.ctx, {}).length;
+    env.ctx.config.delivery.hook = { enabled: true, command: 'exit 7' };
     const logs: string[] = [];
-    await runTick(env.ctx, { jitterMs: 0, log: (s) => logs.push(s) });
-    await runTick(env.ctx, { jitterMs: 0, log: (s) => logs.push(s) });
-    expect(logs.filter((l) => l.includes('Phase 3'))).toHaveLength(1);
+    const r = await runTick(env.ctx, { jitterMs: 0, log: (s) => logs.push(s) });
+    expect(r.delivery.hook.failed).toBeGreaterThan(0);
+    expect(logs).toContain(`本機指令 hook：${r.delivery.hook.failed} 則送出失敗，稍後重試（exit code 7）`);
+    const s = statusCommand(env.ctx);
+    expect(s.delivery.hook).toMatchObject({ enabled: true, retrying: r.delivery.hook.failed, gave_up: 0 });
+    expect(json(s)).not.toContain('exit 7"');
+    expect(eventsCommand(env.ctx, {})).toHaveLength(before);
   });
 });
 
@@ -571,6 +606,16 @@ describe('not set up yet', () => {
     expect(coursesCommand(ctx)).toEqual([]);
     expect(statusCommand(ctx)).toBeDefined();
     expect(existsSync(root)).toBe(false);
+  });
+});
+
+describe('setup delivery step', () => {
+  it('summarises the chosen delivery methods', () => {
+    const d = structuredClone(DEFAULT_CONFIG.delivery);
+    expect(deliverySummary(d)).toBe('outbox 檔案');
+    d.hook = { enabled: true, command: 'my-agent notify' };
+    d.webhook = { enabled: true, url: DEFAULT_WEBHOOK_URL };
+    expect(deliverySummary(d)).toBe('outbox 檔案、本機指令 hook（my-agent notify）、本機 webhook（http://127.0.0.1:8787/ilearn）');
   });
 });
 

@@ -67,6 +67,14 @@ export function statusText(s: Ret<typeof statusCommand>): string {
   if (s.incomplete_courses.length > 0) lines.push(`資料可能不完整的課程：${s.incomplete_courses.join('、')}`);
   lines.push(`檔案：已下載 ${s.files.done}，待下載 ${s.files.pending}，失敗 ${s.files.failed}，略過 ${s.files.skipped}`);
   if (s.last_error) lines.push(`最近錯誤（${s.last_error.at}）：${s.last_error.message}`);
+  for (const [name, d] of [['本機指令 hook', s.delivery.hook], ['本機 webhook', s.delivery.webhook]] as const) {
+    if (!d.enabled && d.retrying === 0 && d.gave_up === 0) continue;
+    const parts = [d.enabled ? '已啟用' : '已停用'];
+    if (d.retrying > 0) parts.push(`重試中 ${d.retrying} 則`);
+    if (d.gave_up > 0) parts.push(`超過 24 小時放棄 ${d.gave_up} 則（outbox 仍保留）`);
+    if (d.last_error && (d.retrying > 0 || d.gave_up > 0)) parts.push(`最近錯誤：${d.last_error}`);
+    lines.push(`${name}：${parts.join('，')}`);
+  }
   if (s.rules_warning) lines.push(`注意：${s.rules_warning}`);
   return lines.join('\n');
 }

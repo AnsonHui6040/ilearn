@@ -26,6 +26,36 @@
 | `ilearn status --json` | 同步狀態、最近錯誤、首次同步進度 |
 | `ilearn rules list --json` | 目前生效的規則（只讀） |
 
+## MCP server
+
+支援 MCP 的客戶端可以改用 `ilearn mcp`（stdio）。設定範例：
+
+```json
+{
+  "mcpServers": {
+    "thu-ilearn": { "command": "ilearn", "args": ["mcp"] }
+  }
+}
+```
+
+工具與上表指令一一對應，回傳內容相同（一段 JSON 文字）：
+
+| 工具 | 對應指令 | 參數 |
+| --- | --- | --- |
+| `tasks` | `ilearn tasks --json` | 無 |
+| `events` | `ilearn events --json` | `deliverable`、`agent`、`type`、`since`，皆可省略 |
+| `events_ack` | `ilearn events ack` | `agent`、`event_id` |
+| `courses` | `ilearn courses --json` | 無 |
+| `course` | `ilearn course <id> --json` | `id` |
+| `announcements` | `ilearn announcements --json` | `category`、`course`，皆可省略 |
+| `grades` | `ilearn grades --json` | `course`，可省略 |
+| `files_search` | `ilearn files search --json` | `keyword` |
+| `file_text` | `ilearn file text --json` | `id` |
+| `status` | `ilearn status --json` | 無 |
+| `rules_list` | `ilearn rules list --json` | 無 |
+
+除了 `events_ack` 之外全部只讀。錯誤以工具錯誤（`isError`）回傳中文訊息。MCP server 不提供同步、Reload、登入、標記「隊員已交」、修改規則或設定、讀取帳密的工具。
+
 `initial_sync_in_progress` 為 `true` 時，首次同步還沒完成，清單可能不完整。這時不要告訴使用者「沒有作業」，要說明資料還在提取中。`incomplete_courses` 不為空時，表示那幾科的資料可能不完整。
 
 `teammate_hint` 為 `true` 表示小組作業可能已由隊員繳交，但系統無法確認，仍視為未完成。
@@ -70,18 +100,28 @@
 - 處理完一個事件就 `ack`。同一個 `dedupe_key` 只會出現一次。
 - 也可以直接讀 `<資料根>/outbox/通知.md`，這是給人看的版本。
 
+## 主動推送（hook／webhook）
+
+使用者可以在 `ilearn setup` 第 5 步啟用，讓事件主動送到你這邊，不必定時查詢。只有 `delivery` 為 `push` 或 `force_push`、且 `deliver_after` 已到的事件會送出；`record` 只寫入 outbox。
+
+- **本機指令 hook**：每則事件執行一次使用者設定的指令，事件 JSON（一行）經標準輸入傳入，另有環境變數 `ILEARN_EVENT_ID`、`ILEARN_EVENT_TYPE`。exit code 0 才算送達，限時 30 秒。
+- **本機 webhook**：以 `POST` 送出同一份 JSON，`Content-Type: application/json`。只接受本機位址（`localhost`、`127.0.0.1`、`::1`），不跟隨轉址，回應 2xx 才算送達，限時 10 秒。
+- **送出時機**：`ilearn run`（cron 每 5 分鐘）、`ilearn daemon`、`ilearn sync` 及 `ilearn reload` 結束時。Reload 即使在夜間也會立即送出。
+- **失敗重試**：依序等 5、10、20、40 分鐘，之後每 60 分鐘再試；`deliver_after` 超過 24 小時仍未送達就放棄。outbox 一定保留事件，`ilearn status --json` 的 `delivery` 欄位會顯示重試中及已放棄的數量。
+- hook 與 webhook 各自記錄是否送達，與你的 `ack` 進度無關。收到並處理後仍請 `ack`，避免之後用 `events --deliverable` 查詢時重複處理。
+
 ## Agent 權限
 
 可以：
 
 - 讀取所有同步資料，包括分數與評語，用來回答使用者的提問。
-- `ilearn events ack`。
+- `ilearn events ack`（MCP 工具 `events_ack`）。
 - 查看目前規則與狀態。
 
 不可以：
 
 - 修改完成狀態或標記「隊員已交」（`mark-teammate` 在非互動終端會被拒絕，請提醒使用者自己操作）。
-- 修改規則（`rules edit`）、設定檔或 `rules.yaml`。
+- 修改規則（`rules edit`）、設定檔（包括 hook 指令及 webhook 網址）或 `rules.yaml`。
 - 讀取帳號、密碼、cookie 或 session 檔案。
 - 觸發登入（`ilearn login`、`ilearn setup`）。登入過期時請使用者自己處理。
 - 直接連線 iLearn 或修改 iLearn 上的任何資料。

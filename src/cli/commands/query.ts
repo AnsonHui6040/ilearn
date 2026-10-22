@@ -6,11 +6,11 @@ import { toTaipeiIso } from '../../time.js';
 import { absPath, CliExit, readAccount, type CliContext } from '../context.js';
 import { readLastError, readProgress } from './state.js';
 
-const EVENT_TYPES: EventType[] = [
+export const EVENT_TYPES = [
   'assignment.new', 'assignment.due_reminder', 'assignment.returned', 'exam.new', 'exam.reminder',
   'video.new', 'announcement.new', 'material.new', 'survey.new', 'course.info_changed', 'grade.posted',
   'feedback.posted', 'auth.expired', 'sync.incomplete', 'sync.initial_completed',
-];
+] as const satisfies readonly EventType[];
 
 const tp = (s: string | null): string | null => (s === null ? null : toTaipeiIso(new Date(s)));
 
@@ -304,5 +304,12 @@ export function statusCommand(ctx: CliContext) {
     files: { pending: count('pending'), done: count('done'), skipped: count('skipped'), failed: count('failed'), link: count('link') },
     last_error: readLastError(ctx.root),
     rules_warning: ctx.rulesWarning ?? null,
+    // 只回報是否啟用與失敗數，不輸出指令或網址本身
+    delivery: Object.fromEntries(
+      (['hook', 'webhook'] as const).map((ch) => [
+        ch,
+        { enabled: ctx.config.delivery[ch].enabled, ...ctx.outbox.hookStats(ch, ctx.now()) },
+      ]),
+    ) as Record<'hook' | 'webhook', { enabled: boolean; retrying: number; gave_up: number; last_error: string | null }>,
   };
 }
