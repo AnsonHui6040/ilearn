@@ -67,6 +67,6 @@
 | webhook 沒有程式接收時進入重試，outbox 保留 | PASS | `status` 顯示 webhook 重試中 96 則；原錯誤訊息只有 `fetch failed`，已改為「連線被拒：127.0.0.1:8787 沒有程式在接收」 |
 | `claude mcp add` 後 `claude mcp list` 顯示已連線 | PASS | `thu-ilearn … ✔ Connected` |
 | MCP `events`（agent test）讀到真資料 | PASS | agent 列出 97 則，與 outbox 一致；未 ack 時沒有建立 cursor |
-| MCP `tasks` 數目與 iLearn 相符 | TBD | 使用者貼上的輸出未包含這段 |
-| 要求 agent 標記隊員已交 | 拒絕 PASS；指引已修正，待重測 | agent 拒絕標記，但叫使用者到 iLearn 網頁操作；已在 MCP 說明及 `tasks` 工具描述寫明 `ilearn mark-teammate <作業 id>` |
+| MCP `tasks` 讀到真資料 | PASS | 10-23 重測：agent 由 `tasks` 列出兩份 `teammate_hint` 小組作業，id、標題、截止時間與 `ilearn tasks --json` 一致；CLI 計數為未完成 21 份（尚未開放 4、逾期 6），與設定精靈摘要相符 |
+| 要求 agent 標記隊員已交 | PASS | 10-23 重測（修正後）：agent 拒絕代為標記，列出 `mark-teammate assignment:<id>` 指令、`--undo` 及先到 iLearn 確認的提醒；兩份作業仍為 pending |
 | Phase 2 遺留：首次提取中途 Ctrl-C 後續傳、`ilearn reload` | Reload PASS；Ctrl-C 續傳 TBD | Reload 數量與推送已驗證 |
