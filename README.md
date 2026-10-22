@@ -19,16 +19,77 @@
 
 ## 安裝
 
+目前尚未發布到 npm，請從 GitHub 安裝：
+
 ```sh
-npm install -g thu-ilearn
+git clone https://github.com/AnsonHui6040/ilearn.git ~/thu-ilearn
+cd ~/thu-ilearn
+npm ci
+npm run build
+npm link
 ```
 
-開發期間在此專案目錄執行 `npm link`，即可取得 `ilearn` 指令；不連結時改用 `node dist/cli/index.js`。
+`npm link` 會建立 `ilearn` 指令；不連結時改用 `node ~/thu-ilearn/dist/cli/index.js`。
 
 安裝後執行設定精靈：
 
 ```sh
 ilearn setup
+```
+
+## 交給 AI agent 安裝
+
+把下面的提示詞整段複製給你的 agent。學號與密碼一律由你自己在終端輸入，不要交給 agent。
+
+### 終端機 code agent（Claude Code、Codex CLI 等）
+
+```text
+請幫我在這台電腦安裝 thu-ilearn（東海大學 iLearn 同步工具，原始碼：https://github.com/AnsonHui6040/ilearn ）。
+
+1. 執行 node -v，確認版本為 22.13 以上；不符合就停下來告訴我，不要自行更換 Node 版本。
+2. 執行：
+   git clone https://github.com/AnsonHui6040/ilearn.git ~/thu-ilearn
+   cd ~/thu-ilearn && npm ci && npm run build && npm link
+   如果 npm link 因權限失敗，不要使用 sudo，把錯誤訊息告訴我。
+3. 執行 ilearn --version 確認指令可用。
+4. 停下來，請我自己在終端執行 ilearn setup。設定精靈會要求輸入學號與密碼，你不可以代為輸入，也不可以讀取或保存我的帳號密碼。等我回覆「設定完成」再繼續。
+5. 把 thu-ilearn 加入你的 MCP 設定：名稱 thu-ilearn，指令 ilearn，參數 mcp。Claude Code 可以執行 claude mcp add thu-ilearn -- ilearn mcp。
+6. 設定每 5 分鐘執行一次 ilearn run。先用 command -v node 與 command -v ilearn 取得絕對路徑，組成一行 crontab，例如：
+   */5 * * * * /絕對路徑/node /絕對路徑/ilearn run
+   修改 crontab 之前先把這一行給我確認。
+7. 閱讀 ~/thu-ilearn/AGENTS.md，了解指令、事件格式與權限。如果你支援 Skill，把 ~/thu-ilearn/SKILL.md 加入你的 skill。
+8. 執行 ilearn status --json 與 ilearn tasks --json，用三到五行告訴我同步狀態與未完成的作業數量。
+
+之後的規則：
+- 只讀取資料。不可以執行 ilearn setup、ilearn login、ilearn mark-teammate、ilearn rules edit、ilearn ui，也不可以修改 config.yaml 或 rules.yaml。
+- 不可以讀取帳號、密碼、cookie 或 session 檔案。
+- 指令回傳 exit code 2 時，提醒我自己執行 ilearn login。
+```
+
+### 自架 agent（Hermes、OpenClaw 等常駐的 agent）
+
+先完成上面的安裝，讓 `ilearn` 指令在 agent 所在的機器可用，再把下面的提示詞交給你的 agent。
+
+```text
+你要負責把我的東海大學 iLearn 通知轉告給我。這台機器已經安裝 thu-ilearn，指令為 ilearn。先閱讀 ~/thu-ilearn/AGENTS.md。
+
+接收通知（二選一）：
+A. 每 5 分鐘執行 ilearn events --deliverable --agent hermes --json，逐則處理後執行 ilearn events ack hermes <event_id>。
+B. 如果我已經在 ilearn ui 的「系統設定 > 推送方式」啟用本機指令 hook 或本機 webhook，事件 JSON 會主動送到你這邊（hook 經標準輸入，webhook 以 POST 送到本機位址）。處理完仍要執行 ilearn events ack hermes <event_id>。
+hermes 是你的 agent 名稱，可以換成你自己的名稱，但之後都要用同一個。
+
+處理規則：
+- delivery 為 force_push：立即通知我。push：一般通知。record：不主動通知，只在我問的時候查詢。
+- 同一個 reload_id 的事件合併成一則總覽。
+- grade.posted 與 feedback.posted 只告訴我哪一科有新分數或評語；我問的時候再用 ilearn grades --json 查內容。
+- 作業的 teammate_hint 為 true 時，提醒我「系統顯示隊員可能已交，請自己確認」；標記隊員已交要由我自己在 ilearn ui 操作。
+- not_started 為 true 的作業還沒開放繳交，不要催促我。
+- initial_sync_in_progress 為 true 時，資料還在提取中，不要說「沒有作業」。
+- 指令回傳 exit code 2 時，提醒我自己執行 ilearn login。
+
+通知格式：每則一到兩行，包含課程名稱、標題、截止時間（台北時間）與 iLearn 連結。
+
+不可以：執行 ilearn setup、ilearn login、ilearn mark-teammate、ilearn rules edit、ilearn ui；修改 config.yaml 或 rules.yaml；讀取帳號、密碼、cookie 或 session 檔案；直接連線 iLearn。
 ```
 
 ## 設定精靈
@@ -56,7 +117,7 @@ ilearn setup
 
 ## 推送給 agent
 
-需要通知的事件一律寫入 `outbox/events/`，agent 可隨時用 `ilearn events --deliverable` 讀取。另外可以在 `ilearn setup` 第 5 步，或直接在 `config.yaml` 啟用主動推送：
+需要通知的事件一律寫入 `outbox/events/`，agent 可隨時用 `ilearn events --deliverable` 讀取。另外可以在 `ilearn ui` 的「系統設定 > 推送方式」、`ilearn setup` 第 5 步，或直接在 `config.yaml` 啟用主動推送：
 
 ```yaml
 delivery:
