@@ -105,7 +105,7 @@ export async function deliverCommand(
   for (const ch of ['hook', 'webhook'] as const) {
     if (r[ch].failed > 0) {
       const err = ctx.outbox.hookStats(ch, ctx.now()).last_error;
-      log(`${CHANNEL_NAME[ch]}有 ${r[ch].failed} 則送出失敗，稍後重試${err ? `（${err}）` : ''}`);
+      log(`${CHANNEL_NAME[ch]}：${r[ch].failed} 則送出失敗，稍後重試${err ? `（${err}）` : ''}`);
     }
   }
   return r;

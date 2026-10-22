@@ -383,7 +383,7 @@ describe('run', () => {
     const logs: string[] = [];
     const r = await runTick(env.ctx, { jitterMs: 0, log: (s) => logs.push(s) });
     expect(r.delivery.hook.failed).toBeGreaterThan(0);
-    expect(logs.some((l) => l.includes('exit code 7'))).toBe(true);
+    expect(logs).toContain(`本機指令 hook：${r.delivery.hook.failed} 則送出失敗，稍後重試（exit code 7）`);
     const s = statusCommand(env.ctx);
     expect(s.delivery.hook).toMatchObject({ enabled: true, retrying: r.delivery.hook.failed, gave_up: 0 });
     expect(json(s)).not.toContain('exit 7"');

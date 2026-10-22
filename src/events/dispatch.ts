@@ -6,6 +6,8 @@ import type { Channel, Outbox } from './outbox.js';
 const HOOK_TIMEOUT_MS = 30_000;
 const WEBHOOK_TIMEOUT_MS = 10_000;
 
+const duration = (ms: number): string => (ms >= 1000 ? `${Math.round(ms / 1000)} 秒` : `${ms} 毫秒`);
+
 /** 只接受本機位址：localhost、*.localhost、127.0.0.0/8、::1；協定限 http／https。 */
 export function webhookUrlError(raw: string): string | null {
   let u: URL;
@@ -44,7 +46,7 @@ export function runHook(command: string, e: IlearnEvent, timeoutMs = HOOK_TIMEOU
     };
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      done(new Error(`逾時（${Math.round(timeoutMs / 1000)} 秒）`));
+      done(new Error(`逾時（${duration(timeoutMs)}）`));
     }, timeoutMs);
     child.stderr.on('data', (b: Buffer) => {
       if (stderr.length < 500) stderr += b.toString('utf8');
@@ -69,14 +71,39 @@ export async function postWebhook(
 ): Promise<void> {
   const bad = webhookUrlError(url);
   if (bad !== null) throw new Error(`webhook 網址被拒絕：${bad}`);
-  const res = await fetchImpl(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'user-agent': 'thu-ilearn' },
-    body: JSON.stringify(e),
-    redirect: 'manual',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  let res: Response;
+  try {
+    res = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'thu-ilearn' },
+      body: JSON.stringify(e),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw new Error(connectionError(err, new URL(url).host, timeoutMs), { cause: err });
+  }
+  if (res.status >= 300 && res.status < 400) throw new Error(`HTTP ${res.status}（不跟隨轉址）`);
   if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+}
+
+/** fetch 只會回報「fetch failed」，改用底層原因說明連線為何失敗。 */
+function connectionError(err: unknown, host: string, timeoutMs: number): string {
+  if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+    return `逾時：${host} 在 ${duration(timeoutMs)}內沒有回應`;
+  }
+  const cause = err instanceof Error ? (err.cause as { code?: string; message?: string } | undefined) : undefined;
+  switch (cause?.code) {
+    case 'ECONNREFUSED':
+      return `連線被拒：${host} 沒有程式在接收`;
+    case 'ENOTFOUND':
+    case 'EAI_AGAIN':
+      return `找不到主機：${host}`;
+    case 'ECONNRESET':
+      return `連線中斷：${host} 在回應前關閉了連線`;
+    default:
+      return `無法連線到 ${host}：${cause?.code ?? cause?.message ?? message(err)}`;
+  }
 }
 
 export interface DispatchDeps {

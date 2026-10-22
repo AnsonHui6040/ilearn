@@ -80,7 +80,7 @@ describe('runHook', () => {
   });
 
   it('rejects on timeout', async () => {
-    await expect(runHook('sleep 5', ev(), 200)).rejects.toThrow(/逾時/);
+    await expect(runHook('sleep 5', ev(), 200)).rejects.toThrow('逾時（200 毫秒）');
   });
 });
 
@@ -116,8 +116,21 @@ describe('postWebhook', () => {
       if (req.url === '/ilearn') res.writeHead(302, { location: 'http://example.com/' }).end();
       else res.writeHead(500).end();
     });
-    await expect(postWebhook(url, ev())).rejects.toThrow(/HTTP (0|302)/);
+    await expect(postWebhook(url, ev())).rejects.toThrow('HTTP 302（不跟隨轉址）');
     await expect(postWebhook(url.replace('/ilearn', '/x'), ev())).rejects.toThrow('HTTP 500');
+  });
+
+  it('explains a refused connection instead of "fetch failed"', async () => {
+    const url = await listen((_req, res) => res.end());
+    const port = (server!.address() as AddressInfo).port;
+    await new Promise<void>((r) => server!.close(() => r()));
+    server = null;
+    await expect(postWebhook(url, ev())).rejects.toThrow(`連線被拒：127.0.0.1:${port} 沒有程式在接收`);
+  });
+
+  it('explains a timeout', async () => {
+    const url = await listen(() => undefined); // 收到請求但永不回應
+    await expect(postWebhook(url, ev(), fetch, 200)).rejects.toThrow(/^逾時：127\.0\.0\.1:\d+ 在 200 毫秒內沒有回應$/);
   });
 
   it('refuses non-localhost URLs without sending anything', async () => {

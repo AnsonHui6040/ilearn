@@ -77,6 +77,16 @@ describe('MCP server', () => {
     }
   });
 
+  it('tells agents the user marks teammate submissions with ilearn mark-teammate, not on the iLearn website', async () => {
+    const c = await connect(mkdtempSync(join(tmpdir(), 'ilearn-mcp-')));
+    const text = c.getInstructions() ?? '';
+    expect(text).toContain('ilearn mark-teammate <作業 id>');
+    expect(text).toContain('不是在 iLearn 網頁上操作');
+    expect(text).toContain('ilearn login');
+    const { tools } = await c.listTools();
+    expect(tools.find((t) => t.name === 'tasks')?.description).toContain('ilearn mark-teammate');
+  });
+
   it('returns the same data as the CLI JSON commands', async () => {
     const { root, ctx } = await seededRoot();
     const c = await connect(root);

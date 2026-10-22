@@ -50,12 +50,14 @@ type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
-const INSTRUCTIONS = [
+export const INSTRUCTIONS = [
   'thu-ilearn：讀取已同步到本機的東海大學 iLearn 資料。',
   '先用 events（deliverable: true，agent: 你的名稱）取得要通知使用者的事件，處理後用 events_ack 標記。',
   'tasks 的 initial_sync_in_progress 為 true 時，資料還在提取中，不要告訴使用者「沒有作業」。',
   'grade.posted、feedback.posted 不含分數內容，使用者詢問時再用 grades 讀取。',
-  '不能同步、登入、標記隊員已交或修改規則；遇到登入過期請提醒使用者自己執行 ilearn login。',
+  '這裡沒有同步、登入、標記隊員已交或修改規則的工具，這些都由使用者在自己的終端機操作：',
+  '- 標記小組作業「隊員已交」：ilearn mark-teammate <作業 id>（取消標記加 --undo）；作業 id 用 tasks 回傳的 id。這不是在 iLearn 網頁上操作。',
+  '- 登入過期：ilearn login。立即同步：ilearn sync。修改規則：ilearn rules edit。',
 ].join('\n');
 
 /** 每次呼叫開新的連線讀最新資料，用完即關；資料庫還不存在時共用一個空白的唯讀 context。 */
@@ -96,7 +98,8 @@ export function createMcpServer(over: Partial<ContextOverrides> = {}): McpServer
     'tasks',
     {
       title: '未完成的作業及影片',
-      description: '回傳 { initial_sync_in_progress, incomplete_courses, tasks[] }，與 ilearn tasks --json 相同。',
+      description:
+        '回傳 { initial_sync_in_progress, incomplete_courses, tasks[] }，與 ilearn tasks --json 相同。teammate_hint 為 true 表示系統顯示隊員可能已交，請使用者確認後自己在終端執行 ilearn mark-teammate <id>。',
       annotations: READ_ONLY,
     },
     () => run(tasksCommand),

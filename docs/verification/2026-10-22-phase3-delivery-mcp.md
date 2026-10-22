@@ -18,7 +18,7 @@
 
 | 項目 | 結果 |
 | --- | --- |
-| `npm test` | 16 個測試檔，243 個測試全部通過 |
+| `npm test` | 16 個測試檔，246 個測試全部通過（2026-10-23 修正後重跑） |
 | `npm run typecheck` | exit 0 |
 | `npm run lint` | exit 0 |
 | `npm run build` | exit 0，產生 `dist/mcp/server.js` |
@@ -36,11 +36,14 @@
 | record 不送、夜間 push 等到 07:00、同一事件只送一次 | `dispatch.test.ts` dispatchPending |
 | hook 與 webhook 分開記錄 | `dispatch.test.ts` track delivery separately |
 | webhook 只接受本機位址、拒絕時不發出請求、非 2xx 與轉址算失敗 | `dispatch.test.ts` webhookUrlError、postWebhook |
+| webhook 連線被拒、逾時時顯示清楚原因（不再只顯示 `fetch failed`） | `dispatch.test.ts` explains a refused connection、explains a timeout |
+| 失敗 log 格式「本機指令 hook：N 則送出失敗，稍後重試（原因）」 | `cli.test.ts` hook failures |
 | `config.yaml` 手動寫入外部網址時不送出 | `dispatch.test.ts` non-localhost webhook in config.yaml |
 | `ilearn run` 實際執行 hook、只送一次 | `cli.test.ts` runs the hook |
 | 夜間 Reload 即時送出 | `cli.test.ts` delivers to the hook immediately |
 | MCP 工具清單與只讀標示 | `mcp.test.ts` exposes exactly |
 | MCP 不提供同步、登入、標記隊員已交、改規則、讀帳密 | `mcp.test.ts` offers nothing that |
+| MCP 說明告訴 agent：隊員已交由使用者在終端執行 `ilearn mark-teammate`，不是在 iLearn 網頁操作 | `mcp.test.ts` tells agents the user marks |
 | MCP 回傳與 CLI JSON 相同 | `mcp.test.ts` same data as the CLI |
 | `events_ack` 只影響該 agent；名稱與 event_id 檢查 | `mcp.test.ts` events_ack |
 | 未設定時讀取為空、ack 被拒、不寫入任何檔案 | `mcp.test.ts` before setup |
@@ -52,12 +55,18 @@
 | 9 | 同一事件不重複推送；cursor 獨立；hook／webhook 失敗後重試，outbox 不遺失 | 自動 PASS |
 | 13 | 帳密不出現在 agent 輸出 | 自動 PASS（MCP 輸出掃描） |
 
-## 真機項目（使用者親手測，未完成前不算 PASS）
+## 真機項目（使用者親手測）
 
-| 項目 | 狀態 |
-| --- | --- |
-| `ilearn setup` 第 5 步勾選 hook，輸入指令後 `config.yaml` 正確 | TBD |
-| `ilearn setup` 第 5 步輸入外部網址被拒，輸入 `http://127.0.0.1:…` 可儲存 | TBD |
-| 真帳戶 `ilearn reload --yes` 後 hook 收到事件 | TBD |
-| 在 Claude Code 或其他 MCP 客戶端加入 `ilearn mcp`，可列出工具並讀到真資料 | TBD |
-| Phase 2 遺留：首次提取中途 Ctrl-C 後續傳、`ilearn reload` | TBD |
+2026-10-22 晚至 10-23，使用者以真帳戶在 macOS 測試。
+
+| 項目 | 狀態 | 依據 |
+| --- | --- | --- |
+| `ilearn setup` 第 5 步勾選 hook 及 webhook，輸入後 `config.yaml` 正確 | PASS | 精靈顯示「已儲存：outbox 檔案、本機指令 hook（cat >> /tmp/ilearn-hook.jsonl）、本機 webhook（http://127.0.0.1:8787/ilearn）」 |
+| `ilearn setup` 第 5 步輸入外部網址被拒 | TBD | 這次直接輸入本機網址，未試外部網址（自動測試已涵蓋） |
+| 真帳戶 `ilearn reload --yes` 後 hook 收到事件 | PASS | 兩批 Reload 各 48 則，`/tmp/ilearn-hook.jsonl` 共 96 行，hook 重試 0 |
+| webhook 沒有程式接收時進入重試，outbox 保留 | PASS | `status` 顯示 webhook 重試中 96 則；原錯誤訊息只有 `fetch failed`，已改為「連線被拒：127.0.0.1:8787 沒有程式在接收」 |
+| `claude mcp add` 後 `claude mcp list` 顯示已連線 | PASS | `thu-ilearn … ✔ Connected` |
+| MCP `events`（agent test）讀到真資料 | PASS | agent 列出 97 則，與 outbox 一致；未 ack 時沒有建立 cursor |
+| MCP `tasks` 數目與 iLearn 相符 | TBD | 使用者貼上的輸出未包含這段 |
+| 要求 agent 標記隊員已交 | 拒絕 PASS；指引已修正，待重測 | agent 拒絕標記，但叫使用者到 iLearn 網頁操作；已在 MCP 說明及 `tasks` 工具描述寫明 `ilearn mark-teammate <作業 id>` |
+| Phase 2 遺留：首次提取中途 Ctrl-C 後續傳、`ilearn reload` | Reload PASS；Ctrl-C 續傳 TBD | Reload 數量與推送已驗證 |
