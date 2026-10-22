@@ -43,7 +43,15 @@ function parseLoginForm(html: string): LoginForm | null {
   const captcha = $('input')
     .toArray()
     .some((el) => /captcha|otp/i.test(`${$(el).attr('name') ?? ''} ${$(el).attr('id') ?? ''}`));
-  const errorMessage = ($('#request_error_message').attr('value') ?? '').trim();
+  // 不讀 #request_error_message：學校每個登入頁都有這個固定字串，不是失敗原因
+  let errorMessage = '';
+  for (const sel of ['#input-error', '.kc-feedback-text', '.alert-error', '.alert-warning', '.info-group']) {
+    const text = $(sel).first().text().replace(/\s+/g, ' ').trim();
+    if (text) {
+      errorMessage = text.slice(0, 200);
+      break;
+    }
+  }
   return { action, captcha, errorMessage };
 }
 
@@ -72,7 +80,7 @@ export async function login(http: HttpClient, username: string, password: string
     const after = parseLoginForm(await res.text());
     if (after) {
       if (after.captcha) throw new AuthError('captcha_required', '登入頁要求驗證碼或雙重驗證，請改用瀏覽器登入');
-      throw new AuthError('bad_credentials', after.errorMessage || '帳號或密碼錯誤');
+      throw new AuthError('bad_credentials', after.errorMessage || '帳號或密碼錯誤，或登入伺服器暫時無法處理');
     }
     const session = await checkSession(http);
     if (!session) throw new AuthError('unexpected', '登入流程結束但未取得有效 session');

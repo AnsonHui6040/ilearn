@@ -64,6 +64,7 @@ export interface TaskRow {
   title: string;
   due_at: string | null;
   overdue: boolean;
+  not_started: boolean;
   group: boolean;
   teammate_hint: boolean;
   completion: StoredItem['completion'];
@@ -96,6 +97,7 @@ export function tasksCommand(ctx: CliContext): {
       title: i.title,
       due_at: tp(i.due_at),
       overdue: i.due_at !== null && Date.parse(i.due_at) < now,
+      not_started: i.start_at !== null && Date.parse(i.start_at) > now,
       group: i.group,
       teammate_hint: i.teammate_hint,
       completion: i.completion,
@@ -141,6 +143,7 @@ interface InfoSnapshot {
 export function courseCommand(ctx: CliContext, id: string) {
   const c = findCourse(ctx, id);
   const names = courseNames(ctx);
+  const now = ctx.now().getTime();
   const items = listItems(ctx.db, { course_id: id });
   const out = (kind: StoredItem['kind']): ReturnType<typeof publicItem>[] =>
     items.filter((i) => i.kind === kind).sort(byDue).map((i) => publicItem(i, names));
@@ -166,7 +169,9 @@ export function courseCommand(ctx: CliContext, id: string) {
     course: { id: c.id, name: c.name, code: c.code, semester: c.semester },
     schedule: { text: info.schedule?.raw ?? '', slots: info.schedule?.slots ?? [] },
     info_fields: info.fields ?? [],
-    todo: assignments.filter((i) => i.completion === 'pending').map((i) => publicItem(i, names)),
+    todo: assignments
+      .filter((i) => i.completion === 'pending')
+      .map((i) => ({ ...publicItem(i, names), not_started: i.start_at !== null && Date.parse(i.start_at) > now })),
     completed: assignments.filter((i) => i.completion !== 'pending').map((i) => publicItem(i, names)),
     exams: out('exam'),
     announcements: announcements.map((i) => publicItem(i, names)),

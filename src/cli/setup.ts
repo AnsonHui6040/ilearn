@@ -1,7 +1,8 @@
+import type { DatabaseSync } from 'node:sqlite';
 import { chooseBackend, savePassword, VPS_RISK_WARNING } from '../auth/credentials.js';
 import { saveConfig, type Config } from '../config/config.js';
 import { writeSecureFile } from '../config/paths.js';
-import { listItems } from '../db/repo.js';
+import { listFiles, listItems } from '../db/repo.js';
 import { AuthError } from '../ilearn/auth.js';
 import { stringifyRules } from '../rules/yaml.js';
 import type { SyncProgress, SyncReport } from '../sync/sync.js';
@@ -39,15 +40,54 @@ export function formatProgress(p: SyncProgress): string {
 const shortTime = (iso: string): string => iso.slice(5, 16).replace('T', ' ');
 
 export interface SummaryExtras {
-  filesDone?: number;
+  assignments?: { open: number; notYetOpen: number; overdue: number; overdueTeammate: number };
+  files?: { done: number; doneBytes: number; skipped: number; links: number };
   exams?: { title: string; start_at: string }[];
+}
+
+function formatSize(n: number): string {
+  const mb = n / 1024 / 1024;
+  if (mb >= 10) return `${Math.round(mb)} MB`;
+  if (mb >= 1) return `${mb.toFixed(1)} MB`;
+  return `${Math.round(n / 1024)} KB`;
+}
+
+/** 從資料庫算出完成摘要需要的分項數字。 */
+export function summaryExtras(db: DatabaseSync, now: Date): SummaryExtras {
+  const t0 = now.getTime();
+  const assignments = { open: 0, notYetOpen: 0, overdue: 0, overdueTeammate: 0 };
+  for (const it of listItems(db, { kind: 'assignment' })) {
+    if (it.completion !== 'pending') continue;
+    if (it.start_at !== null && Date.parse(it.start_at) > t0) assignments.notYetOpen++;
+    else if (it.due_at !== null && Date.parse(it.due_at) < t0) {
+      assignments.overdue++;
+      if (it.teammate_hint) assignments.overdueTeammate++;
+    } else assignments.open++;
+  }
+  const doneFiles = listFiles(db, { status: 'done' });
+  const files = {
+    done: doneFiles.length,
+    doneBytes: doneFiles.reduce((a, f) => a + f.size, 0),
+    skipped: listFiles(db, { status: 'skipped' }).length,
+    links: listFiles(db, { status: 'link' }).length,
+  };
+  const exams = listItems(db, { kind: 'exam' })
+    .filter((e) => e.start_at !== null && Date.parse(e.start_at) > t0 && Date.parse(e.start_at) <= t0 + 3 * 86400_000)
+    .map((e) => ({ title: e.title, start_at: toTaipeiIso(new Date(e.start_at as string)) }));
+  return { assignments, files, exams };
 }
 
 export function formatSummary(report: SyncReport, extras: SummaryExtras = {}): string {
   const lines: string[] = [];
   lines.push(report.initial ? '首次同步完成' : '同步完成');
   lines.push(`課程數：${report.courses}`);
-  lines.push(`未完成作業：${report.pendingAssignments}`);
+  const a = extras.assignments;
+  if (a) {
+    const team = a.overdueTeammate > 0 ? `（其中 ${a.overdueTeammate} 份系統顯示隊員已交）` : '';
+    lines.push(`未完成作業：進行中 ${a.open}、尚未開放 ${a.notYetOpen}、逾期 ${a.overdue}${team}`);
+  } else {
+    lines.push(`未完成作業：${report.pendingAssignments}`);
+  }
   if (report.upcoming3d.length === 0 && (extras.exams ?? []).length === 0) {
     lines.push('3 日內截止或考試：沒有');
   } else {
@@ -55,7 +95,13 @@ export function formatSummary(report: SyncReport, extras: SummaryExtras = {}): s
     for (const a of report.upcoming3d) lines.push(`  作業 ${a.title}，截止 ${shortTime(a.due_at)}`);
     for (const e of extras.exams ?? []) lines.push(`  考試 ${e.title}，${shortTime(e.start_at)}`);
   }
-  if (extras.filesDone !== undefined) lines.push(`已下載檔案：${extras.filesDone}`);
+  const f = extras.files;
+  if (f) {
+    const parts = [`已下載 ${f.done} 個（${formatSize(f.doneBytes)}）`];
+    if (f.skipped > 0) parts.push(`略過 ${f.skipped} 個（老師關閉下載）`);
+    if (f.links > 0) parts.push(`外部連結 ${f.links} 個`);
+    lines.push(`檔案：${parts.join('、')}`);
+  }
   if (report.filesFailed.length === 0) {
     lines.push('下載失敗：沒有');
   } else {
@@ -72,7 +118,7 @@ function loginFailureText(e: unknown): string {
   if (e instanceof AuthError) {
     switch (e.code) {
       case 'bad_credentials':
-        return `登入失敗，帳號或密碼錯誤（${e.message}）`;
+        return `登入失敗：${e.message}`;
       case 'captcha_required':
         return `登入失敗，${e.message}`;
       case 'network':
@@ -87,13 +133,6 @@ function loginFailureText(e: unknown): string {
 const say = (s = ''): void => void process.stdout.write(`${s}\n`);
 
 /* ---------- 互動流程 ---------- */
-
-function upcomingExams(ctx: CliContext): { title: string; start_at: string }[] {
-  const t0 = ctx.now().getTime();
-  return listItems(ctx.db, { kind: 'exam' })
-    .filter((e) => e.start_at !== null && Date.parse(e.start_at) > t0 && Date.parse(e.start_at) <= t0 + 3 * 86400_000)
-    .map((e) => ({ title: e.title, start_at: toTaipeiIso(new Date(e.start_at as string)) }));
-}
 
 async function promptCredentials(
   ctx: CliContext,
@@ -217,7 +256,7 @@ export async function runSetup(ctx: CliContext): Promise<void> {
 
     // 6. 完成摘要
     say();
-    if (report) say(formatSummary(report, { exams: upcomingExams(ctx) }));
+    if (report) say(formatSummary(report, summaryExtras(ctx.db, ctx.now())));
     say();
     say('背景服務註冊：Phase 5 提供。目前可用 cron 定時執行：*/5 * * * * ilearn run');
     say('要把現有事項推送給 agent，請執行 ilearn reload。');

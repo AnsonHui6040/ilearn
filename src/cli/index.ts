@@ -32,7 +32,7 @@ import {
   statusText,
   tasksText,
 } from './format.js';
-import { formatProgress, formatSummary, runLogin, runSetup } from './setup.js';
+import { formatProgress, formatSummary, runLogin, runSetup, summaryExtras } from './setup.js';
 
 const write = (s: string): void => void process.stdout.write(`${s}\n`);
 const warn = (s: string): void => void process.stderr.write(`${s}\n`);
@@ -91,7 +91,7 @@ program
     const printer = o.json ? undefined : progressPrinter();
     const r = await syncCommand(ctx, { ...(o.force ? { force: true } : {}), ...(printer ? { onProgress: printer } : {}) });
     if (printer) process.stderr.write('\n');
-    out(o.json, r, () => (r.skipped ? (r.reason ?? '略過') : r.report ? formatSummary(r.report) : ''));
+    out(o.json, r, () => (r.skipped ? (r.reason ?? '略過') : r.report ? formatSummary(r.report, summaryExtras(ctx.db, ctx.now())) : ''));
   });
 
 program

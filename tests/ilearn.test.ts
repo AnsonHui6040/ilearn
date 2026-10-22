@@ -19,7 +19,7 @@ const PASSWORD = 'S3cret!pw';
 
 interface Call { method: string; url: string; body: string | null; cookie: string | null }
 
-function loginFetch(opts: { fail?: boolean; captcha?: boolean } = {}): { fetchImpl: typeof fetch; calls: Call[] } {
+function loginFetch(opts: { fail?: boolean | 'input-error'; captcha?: boolean } = {}): { fetchImpl: typeof fetch; calls: Call[] } {
   const calls: Call[] = [];
   let authed = false;
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -42,7 +42,20 @@ function loginFetch(opts: { fail?: boolean; captcha?: boolean } = {}): { fetchIm
       });
     }
     if (url === KC_POST && init?.method === 'POST') {
-      if (opts.fail) return html(fx('ilearn/keycloak-login.html').replace('value=""', 'value="帳號或密碼錯誤"'));
+      if (opts.fail === 'input-error') {
+        return html(
+          fx('ilearn/keycloak-login.html').replace('<form ', '<span id="input-error">帳號或密碼錯誤。</span><form '),
+        );
+      }
+      // 學校的每個 Keycloak 登入頁都帶這個固定字串，不是失敗原因
+      if (opts.fail) {
+        return html(
+          fx('ilearn/keycloak-login.html').replace(
+            'id="request_error_message" value=""',
+            'id="request_error_message" value="服務器請求失敗，請稍後重新提交"',
+          ),
+        );
+      }
       return redirect('https://ilearn.thu.edu.tw/login?ticket=ST-x');
     }
     if (url === 'https://ilearn.thu.edu.tw/login?ticket=ST-x') {
@@ -81,6 +94,17 @@ describe('login', () => {
     expect((err as AuthError).code).toBe('bad_credentials');
     expect((err as AuthError).message).not.toContain(PASSWORD);
     expect(String((err as AuthError).stack)).not.toContain(PASSWORD);
+    expect((err as AuthError).message).not.toContain('服務器請求失敗');
+    expect((err as AuthError).message).toBe('帳號或密碼錯誤，或登入伺服器暫時無法處理');
+  });
+
+  it('頁面有 #input-error 時採用其文字', async () => {
+    const { fetchImpl } = loginFetch({ fail: 'input-error' });
+    const err = await login(createHttp({ fetchImpl }), 'u123', PASSWORD).catch((e: unknown) => e);
+    expect((err as AuthError).code).toBe('bad_credentials');
+    expect((err as AuthError).message).toContain('帳號或密碼錯誤。');
+    expect((err as AuthError).message).not.toContain('服務器請求失敗');
+    expect((err as AuthError).message).not.toContain(PASSWORD);
   });
 
   it('出現 captcha / otp 欄位拋 captcha_required', async () => {

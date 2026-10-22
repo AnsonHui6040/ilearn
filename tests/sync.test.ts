@@ -196,6 +196,26 @@ describe('later syncs', () => {
     expect(it?.group).toBe(true);
   });
 
+  it('stores assignment start_at from the activity and emits nothing when it changes', async () => {
+    const env = makeEnv();
+    const act = env.fake.data.activities[1]?.find((a) => a.id === 101);
+    if (act) act.start_time = '2026-11-27T00:00:00Z';
+    await runSync(env.ctx);
+    expect(getItem(env.db, 'assignment:101', 'assignment')?.start_at).toBe('2026-11-27T00:00:00.000Z');
+    env.clock.now = new Date(env.clock.now.getTime() + HOUR);
+    const before = env.events().length;
+    if (act) act.start_time = '2026-11-28T00:00:00Z';
+    await runSync(env.ctx);
+    expect(getItem(env.db, 'assignment:101', 'assignment')?.start_at).toBe('2026-11-28T00:00:00.000Z');
+    expect(env.events().length).toBe(before);
+  });
+
+  it('assignment start_at is null when the activity has none', async () => {
+    const env = makeEnv();
+    await runSync(env.ctx);
+    expect(getItem(env.db, 'assignment:101', 'assignment')?.start_at).toBeNull();
+  });
+
   it('score appearing emits grade.posted without the score in the event', async () => {
     const env = await afterInitial();
     const hw = env.fake.data.homework[1]?.[0];

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../src/ilearn/api.js';
+import { upsertFile, upsertItem, type StoredFile, type StoredItem } from '../src/db/repo.js';
 import { runSync } from '../src/sync/sync.js';
 import { CliExit, createContext, loadRules, type CliContext } from '../src/cli/context.js';
 import {
@@ -20,7 +21,8 @@ import {
 } from '../src/cli/commands/query.js';
 import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
 import { reloadCommand, runTick, syncCommand } from '../src/cli/commands/sync.js';
-import { detectEnvironment, formatProgress, formatSummary } from '../src/cli/setup.js';
+import { detectEnvironment, formatProgress, formatSummary, summaryExtras } from '../src/cli/setup.js';
+import { tasksText } from '../src/cli/format.js';
 import { courseViewHtml, createFakeApi, standardData, type FakeData } from './helpers/fakeApi.js';
 
 const HOUR = 3600_000;
@@ -69,6 +71,27 @@ describe('tasks', () => {
     const hw = r.tasks.find((t) => t.id === 'assignment:101');
     expect(hw).toMatchObject({ kind: 'assignment', course: '資料結構', overdue: false, teammate_hint: false });
     expect(hw?.due_at).toBe('2026-10-30T23:59:00+08:00');
+  });
+
+  it('marks not_started for assignments whose start time is in the future', async () => {
+    const env = mk();
+    const act = env.fake.data.activities[1]?.find((a) => a.id === 101);
+    if (act) act.start_time = '2026-11-27T00:00:00Z';
+    await runSync(env.ctx);
+    env.clock.now = new Date(env.clock.now.getTime() + HOUR);
+    const r = tasksCommand(env.ctx);
+    expect(r.tasks.find((t) => t.id === 'assignment:101')?.not_started).toBe(true);
+    expect(r.tasks.find((t) => t.id === 'video:103')?.not_started).toBe(false);
+    expect(tasksText(r)).toContain('（尚未開放）');
+    const todo = courseCommand(env.ctx, '1').todo;
+    expect(todo.find((t) => t.id === 'assignment:101')?.not_started).toBe(true);
+    env.clock.now = new Date('2026-11-28T00:00:00Z');
+    expect(tasksCommand(env.ctx).tasks.find((t) => t.id === 'assignment:101')?.not_started).toBe(false);
+  });
+
+  it('not_started is false when there is no start time', async () => {
+    const { ctx } = await seeded();
+    expect(tasksCommand(ctx).tasks.every((t) => t.not_started === false)).toBe(true);
   });
 
   it('flags overdue items', async () => {
@@ -435,17 +458,72 @@ describe('pure setup helpers', () => {
         upcoming3d: [{ title: '作業一', due_at: '2026-10-25T23:59:00+08:00' }],
         incompleteCourses: ['管理學'], filesFailed: [{ name: 'a.pdf', reason: 'HTTP 500' }], eventsEmitted: 1,
       },
-      { filesDone: 12, exams: [{ title: '期中考', start_at: '2026-10-24T09:00:00+08:00' }] },
+      { exams: [{ title: '期中考', start_at: '2026-10-24T09:00:00+08:00' }] },
     );
     expect(text).toContain('首次同步完成');
     expect(text).toContain('課程數：5');
     expect(text).toContain('未完成作業：3');
     expect(text).toContain('作業 作業一，截止 10-25 23:59');
     expect(text).toContain('考試 期中考');
-    expect(text).toContain('已下載檔案：12');
     expect(text).toContain('a.pdf');
     expect(text).toContain('管理學');
     expect(text).not.toMatch(/·|→|[\u{1F300}-\u{1FAFF}]/u);
+  });
+
+  it('summaryExtras splits pending assignments and file states; formatSummary prints exact lines', () => {
+    const { ctx } = mk();
+    const now = new Date('2026-10-22T04:00:00Z');
+    const iso = (d: number): string => new Date(now.getTime() + d * 86400_000).toISOString();
+    const base = (id: string, over: Partial<StoredItem>): StoredItem => ({
+      id, kind: 'assignment', course_id: 'c1', title: id, body: null, due_at: null, start_at: null, url: null,
+      completion: 'pending', teammate_hint: false, group: false, score: null, score_published: false,
+      feedback: null, categories: [], matched_rules: [], manual_categories: null, delivery: null, raw: '{}',
+      first_seen_at: iso(-10), updated_at: iso(-10), ...over,
+    });
+    const items: StoredItem[] = [
+      base('open1', { due_at: iso(5) }),
+      base('open2', { due_at: null }),
+      base('future1', { start_at: iso(10), due_at: iso(17) }),
+      base('over1', { due_at: iso(-1) }),
+      base('over2', { due_at: iso(-2), teammate_hint: true, group: true }),
+      base('done1', { due_at: iso(-3), completion: 'completed' }),
+      base('exam1', { kind: 'exam', due_at: iso(-3) }),
+    ];
+    for (const it of items) upsertItem(ctx.db, it);
+    const file = (id: string, status: StoredFile['status'], size: number): StoredFile => ({
+      upload_id: id, item_id: 'open1', course_id: 'c1', name: id, size, hash: null,
+      local_path: null, status, link: null, allow_download: status !== 'skipped',
+    });
+    upsertFile(ctx.db, file('f1', 'done', 150 * 1024 * 1024));
+    upsertFile(ctx.db, file('f2', 'done', 72 * 1024 * 1024));
+    upsertFile(ctx.db, file('f3', 'skipped', 5));
+    upsertFile(ctx.db, file('f4', 'skipped', 5));
+    upsertFile(ctx.db, file('f5', 'link', 0));
+    const extras = summaryExtras(ctx.db, now);
+    const report = {
+      initial: false, courses: 2, pendingAssignments: 5, upcoming3d: [], incompleteCourses: [],
+      filesFailed: [], eventsEmitted: 0,
+    };
+    const lines = formatSummary(report, extras).split('\n');
+    expect(lines).toContain('未完成作業：進行中 2、尚未開放 1、逾期 2（其中 1 份系統顯示隊員已交）');
+    expect(lines).toContain('檔案：已下載 2 個（222 MB）、略過 2 個（老師關閉下載）、外部連結 1 個');
+    expect(lines).toContain('3 日內截止或考試：沒有');
+    expect(lines).toContain('下載失敗：沒有');
+  });
+
+  it('formatSummary omits zero parts and formats small sizes', () => {
+    const { ctx } = mk();
+    upsertFile(ctx.db, {
+      upload_id: 'a', item_id: 'x', course_id: 'c1', name: 'a', size: 3 * 1024 * 1024 + 512 * 1024, hash: null,
+      local_path: null, status: 'done', link: null, allow_download: true,
+    });
+    const report = {
+      initial: false, courses: 1, pendingAssignments: 0, upcoming3d: [], incompleteCourses: [],
+      filesFailed: [], eventsEmitted: 0,
+    };
+    const lines = formatSummary(report, summaryExtras(ctx.db, new Date('2026-10-22T04:00:00Z'))).split('\n');
+    expect(lines).toContain('未完成作業：進行中 0、尚未開放 0、逾期 0');
+    expect(lines).toContain('檔案：已下載 1 個（3.5 MB）');
   });
 
   it('formatProgress shows courses, files and size', () => {

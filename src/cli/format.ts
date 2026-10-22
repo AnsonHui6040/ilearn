@@ -12,7 +12,7 @@ export function tasksText(r: Ret<typeof tasksCommand>): string {
   if (r.tasks.length === 0) lines.push('目前沒有未完成的作業或影片');
   for (const t of r.tasks) {
     const tag = t.kind === 'video' ? '影片' : '作業';
-    const flags = [t.overdue ? '已逾期' : '', t.teammate_hint ? '隊員可能已交' : ''].filter(Boolean).join('，');
+    const flags = [t.not_started ? '尚未開放' : '', t.overdue ? '已逾期' : '', t.teammate_hint ? '隊員可能已交' : ''].filter(Boolean).join('，');
     lines.push(`${short(t.due_at)}  ${t.course ?? ''}  ${tag}：${t.title}${flags ? `（${flags}）` : ''}  ${t.id}`);
   }
   return lines.join('\n');

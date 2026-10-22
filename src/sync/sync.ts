@@ -325,6 +325,7 @@ async function syncHomework(
 
   const item = blankItem(run, id, 'assignment', course.id, hw?.title ?? a.title);
   item.due_at = toUtcIso(hw?.end_time ?? a.end_time ?? a.deadline);
+  item.start_at = toUtcIso(a.start_time);
   item.url = urls.activity(course.id, a.id);
   item.completion = res.state;
   item.group = group;
