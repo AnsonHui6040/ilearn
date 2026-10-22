@@ -130,7 +130,7 @@ program
       isTTY,
       confirm: async (n) => {
         const { confirm } = await import('@inquirer/prompts');
-        return confirm({ message: `將推送 ${n} 則事件，確定嗎？`, default: false });
+        return confirm({ message: `將推送 ${n} 則事件，確定嗎？`, default: false, transformer: (v: boolean) => (v ? 'Y' : 'N') });
       },
     });
     out(o.json, r, () => (r.cancelled ? `已取消，沒有推送（原本會推送 ${r.planned} 則）` : `已推送 ${r.pushed} 則事件`));
@@ -265,11 +265,11 @@ rules
     const r = await rulesEditCommand(createSetUpContext(), {
       confirm: (preview) => {
         write(preview);
-        return confirm({ message: '要儲存嗎？', default: true });
+        return confirm({ message: '要儲存嗎？', default: true, transformer: (v: boolean) => (v ? 'Y' : 'N') });
       },
       retry: (msg) => {
         warn(msg);
-        return confirm({ message: '要回去修改嗎？不修改就放棄這次編輯', default: true });
+        return confirm({ message: '要回去修改嗎？不修改就放棄這次編輯', default: true, transformer: (v: boolean) => (v ? 'Y' : 'N') });
       },
     });
     write(r.saved ? '已儲存 rules.yaml' : '沒有儲存');

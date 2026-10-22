@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { chooseBackend, savePassword, VPS_RISK_WARNING } from '../auth/credentials.js';
 import { saveConfig, type Config } from '../config/config.js';
 import { writeSecureFile } from '../config/paths.js';
-import { listFiles, listItems } from '../db/repo.js';
+import { getSyncState, listFiles, listItems } from '../db/repo.js';
 import { AuthError } from '../ilearn/auth.js';
 import { stringifyRules } from '../rules/yaml.js';
 import type { SyncProgress, SyncReport } from '../sync/sync.js';
@@ -15,8 +15,8 @@ import { CliExit, rulesPath, type CliContext } from './context.js';
 
 /* ---------- 純函式 ---------- */
 
-export const KEYS_HELP_CHECKBOX = '↑↓ 移動\u3000空白鍵 剔選\u3000a 全選\u3000i 反選\u3000Enter 確認';
-export const KEYS_HELP_SELECT = '↑↓ 移動\u3000Enter 確認';
+export const KEYS_HELP_CHECKBOX = '↑↓ 移動 Move  Space 剔選 Select  a 全選 All  i 反選 Invert  Enter 確認 Confirm';
+export const KEYS_HELP_SELECT = '↑↓ 移動 Move  Enter 確認 Confirm';
 
 const checkboxTheme = { style: { keysHelpTip: (): string => KEYS_HELP_CHECKBOX } };
 const selectTheme = { style: { keysHelpTip: (): string => KEYS_HELP_SELECT } };
@@ -73,6 +73,13 @@ export function formatBytes(n: number): string {
 export function formatProgress(p: SyncProgress): string {
   return `課程 ${p.coursesDone}/${p.coursesTotal}，檔案 ${p.filesDone}/${p.filesTotal}，已下載 ${formatBytes(p.bytes)}`;
 }
+
+export function formatFetchDone(initial: boolean, p: SyncProgress): string {
+  const head = initial ? '首次提取完成' : '背景同步完成';
+  return `✔ ${head}：課程 ${p.coursesDone}/${p.coursesTotal}、檔案 ${p.filesDone}/${p.filesTotal}（${formatBytes(p.bytes)}）`;
+}
+
+const yn = (v: boolean): string => (v ? 'Y' : 'N');
 
 const shortTime = (iso: string): string => iso.slice(5, 16).replace('T', ' ');
 
@@ -194,7 +201,7 @@ async function promptCredentials(
       return { username, password };
     } catch (e) {
       say(loginFailureText(e));
-      if (!(await p.confirm({ message: '要重新輸入嗎？', default: true }))) throw new CliExit(1, '已取消設定');
+      if (!(await p.confirm({ message: '要重新輸入嗎？', default: true, transformer: yn }))) throw new CliExit(1, '已取消設定');
     }
   }
 }
@@ -209,7 +216,7 @@ async function askSavePassword(
   if (ctx.config.environment === 'vps') {
     say(`提醒：${VPS_RISK_WARNING}`);
   }
-  const save = await p.confirm({ message: '要保存密碼，讓 session 過期時自動重新登入嗎？', default: defaultSave });
+  const save = await p.confirm({ message: '要保存密碼，讓 session 過期時自動重新登入嗎？', default: defaultSave, transformer: yn });
   ctx.config.password_saved = false;
   let note = '不保存密碼，只保存 session';
   if (save) {
@@ -272,7 +279,7 @@ export async function runSetup(ctx: CliContext): Promise<void> {
   let reuse = false;
   const existing = await savedSessionUser(ctx);
   if (existing !== null && ctx.username !== null) {
-    reuse = await p.confirm({ message: `目前已登入（學號 ${ctx.username}），要沿用這次登入嗎？`, default: true });
+    reuse = await p.confirm({ message: `目前已登入（學號 ${ctx.username}），要沿用這次登入嗎？`, default: true, transformer: yn });
     if (reuse) ctx.userId = existing.userId;
   }
   if (reuse) {
@@ -291,10 +298,13 @@ export async function runSetup(ctx: CliContext): Promise<void> {
   const ac = new AbortController();
   ctx.api = abortableApi(ctx.api, ac.signal);
   ctx.wrapApi = (api) => abortableApi(api, ac.signal);
+  const wasCompleted = getSyncState(ctx.db).initial_completed;
   let printing = false;
+  let lastProgress: SyncProgress = { coursesDone: 0, coursesTotal: 0, filesDone: 0, filesTotal: 0, bytes: 0 };
   const settled: Promise<{ ok: true; outcome: SyncOutcome } | { ok: false; error: unknown }> = syncCommand(ctx, {
     force: true,
     onProgress: (pr) => {
+      lastProgress = pr;
       if (printing) process.stderr.write(`\r${formatProgress(pr)}   `);
     },
   }).then(
@@ -307,7 +317,7 @@ export async function runSetup(ctx: CliContext): Promise<void> {
     say('\n已中斷，下次執行 ilearn sync 會從中斷處繼續');
   };
   process.on('SIGINT', onSigint);
-  say('首次提取已在背景開始，請繼續完成其餘設定。');
+  say(wasCompleted ? '背景同步已開始，請繼續完成其餘設定。' : '首次提取已在背景開始，請繼續完成其餘設定。');
   say();
 
   try {
@@ -316,7 +326,7 @@ export async function runSetup(ctx: CliContext): Promise<void> {
     printing = true;
     const result = await settled;
     printing = false;
-    process.stderr.write('\n');
+    process.stderr.write(`\r${' '.repeat(80)}\r`);
     if (!result.ok) {
       const e = result.error;
       if (e instanceof Error && e.name === 'AbortError') throw new CliExit(130, '設定已中斷，下次執行 ilearn sync 會從中斷處繼續');
@@ -324,6 +334,8 @@ export async function runSetup(ctx: CliContext): Promise<void> {
       throw new CliExit(1, `首次提取沒有完成：${e instanceof Error ? e.message : String(e)}，之後執行 ilearn sync 會繼續`);
     }
     const report = result.outcome.report;
+    say(formatFetchDone(!wasCompleted, lastProgress));
+    say();
 
     await askSummaries(ctx, p, d);
 
@@ -373,7 +385,7 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
     ],
     theme: checkboxTheme,
   });
-  ok('推送方式固定為 outbox 檔案（必備）');
+  say();
 
   header(6, '通知規則');
   const enabled = await p.checkbox({

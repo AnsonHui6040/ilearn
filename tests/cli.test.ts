@@ -23,6 +23,7 @@ import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/co
 import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
 import {
   detectEnvironment,
+  formatFetchDone,
   formatProgress,
   formatSummary,
   KEYS_HELP_CHECKBOX,
@@ -536,6 +537,14 @@ describe('pure setup helpers', () => {
     expect(lines).toContain('檔案：已下載 1 個（3.5 MB）');
   });
 
+  it('formatFetchDone summarises the finished background fetch', () => {
+    const p = { coursesDone: 12, coursesTotal: 12, filesDone: 75, filesTotal: 75, bytes: 229114880 };
+    expect(formatFetchDone(true, p)).toBe('✔ 首次提取完成：課程 12/12、檔案 75/75（218.5 MB）');
+    expect(formatFetchDone(false, { ...p, filesDone: 0, filesTotal: 0, bytes: 0 })).toBe(
+      '✔ 背景同步完成：課程 12/12、檔案 0/0（0 B）',
+    );
+  });
+
   it('formatProgress shows courses, files and size', () => {
     expect(formatProgress({ coursesDone: 2, coursesTotal: 5, filesDone: 3, filesTotal: 10, bytes: 2 * 1024 * 1024 })).toBe(
       '課程 2/5，檔案 3/10，已下載 2.0 MB',
@@ -571,9 +580,9 @@ describe('setup layout helpers', () => {
     expect(stepHeader(5, 8, '要啟用的介面').split('\n')).toEqual([rule, '步驟 5／8\u3000要啟用的介面', rule]);
   });
 
-  it('key help strings are Chinese', () => {
-    expect(KEYS_HELP_CHECKBOX).toBe('↑↓ 移動\u3000空白鍵 剔選\u3000a 全選\u3000i 反選\u3000Enter 確認');
-    expect(KEYS_HELP_SELECT).toBe('↑↓ 移動\u3000Enter 確認');
+  it('key help strings are bilingual', () => {
+    expect(KEYS_HELP_CHECKBOX).toBe('↑↓ 移動 Move  Space 剔選 Select  a 全選 All  i 反選 Invert  Enter 確認 Confirm');
+    expect(KEYS_HELP_SELECT).toBe('↑↓ 移動 Move  Enter 確認 Confirm');
   });
 
   it('setupDefaults uses detection without a config and saved answers with one', () => {
