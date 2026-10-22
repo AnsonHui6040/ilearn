@@ -124,6 +124,7 @@
 - 修改規則（`rules edit`）、設定檔（包括 hook 指令及 webhook 網址）或 `rules.yaml`。
 - 讀取帳號、密碼、cookie 或 session 檔案。
 - 觸發登入（`ilearn login`、`ilearn setup`）。登入過期時請使用者自己處理。
+- 開啟 `ilearn ui` 代為操作。這是給使用者本人的介面，在非互動終端執行會被拒絕；需要修改設定時請提醒使用者自己開啟。
 - 直接連線 iLearn 或修改 iLearn 上的任何資料。
 
 ## 限制
