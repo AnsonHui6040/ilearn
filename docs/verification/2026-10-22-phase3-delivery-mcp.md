@@ -62,7 +62,8 @@
 | 項目 | 狀態 | 依據 |
 | --- | --- | --- |
 | `ilearn setup` 第 5 步勾選 hook 及 webhook，輸入後 `config.yaml` 正確 | PASS | 精靈顯示「已儲存：outbox 檔案、本機指令 hook（cat >> /tmp/ilearn-hook.jsonl）、本機 webhook（http://127.0.0.1:8787/ilearn）」 |
-| `ilearn setup` 第 5 步輸入外部網址被拒 | TBD | 這次直接輸入本機網址，未試外部網址（自動測試已涵蓋） |
+| `ilearn setup` 第 5 步輸入外部網址被拒 | PASS | 10-23 重測：輸入 `http://example.com/x` 顯示「只接受本機位址（localhost、127.0.0.1 或 ::1）」，無法繼續 |
+| 重跑 `ilearn setup` 時第 5 步帶入上次的選擇 | PASS | 10-23 重測：hook、webhook 預設已勾選，指令預設為上次輸入的 `cat >> /tmp/ilearn-hook.jsonl` |
 | 真帳戶 `ilearn reload --yes` 後 hook 收到事件 | PASS | 兩批 Reload 各 48 則，`/tmp/ilearn-hook.jsonl` 共 96 行，hook 重試 0 |
 | webhook 沒有程式接收時進入重試，outbox 保留 | PASS | `status` 顯示 webhook 重試中 96 則；原錯誤訊息只有 `fetch failed`，已改為「連線被拒：127.0.0.1:8787 沒有程式在接收」 |
 | `claude mcp add` 後 `claude mcp list` 顯示已連線 | PASS | `thu-ilearn … ✔ Connected` |
