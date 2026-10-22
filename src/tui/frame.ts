@@ -93,7 +93,7 @@ function clockLine(now: Date, lastSyncAt: string | null, cols: number, color: bo
   return segs([{ text: ' ' }, { text: clock, style: 'bold' }, { text: ' '.repeat(gap) }, { text: right, style: 'dim' }], cols, color);
 }
 
-function visibleStart(cursor: number | null, scroll: number, h: number, len: number): number {
+export function visibleStart(cursor: number | null, scroll: number, h: number, len: number): number {
   let s = scroll;
   if (cursor !== null) {
     if (cursor < s) s = cursor;

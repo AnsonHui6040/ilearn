@@ -368,7 +368,20 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
 }
 
 function systemPage(s: TuiState, d: TuiData): Page {
-  const left: Row[] = [head('系統設定'), ...SYSTEM_ITEMS.map((t, i): Row => ({ text: `  ${t}`, key: `sys:${i}` }))];
+  // 左欄按 Enter 直接執行該項的主要動作
+  const leftAction: Partial<Record<(typeof SYSTEM_ITEMS)[number], Row['activate']>> = {
+    Reload: { reload: true },
+    夜間時段: { prompt: { kind: 'quietHours' } },
+    截止提醒: { prompt: { kind: 'reminderOffsets', courseId: null } },
+    Reset: { confirm: [{ kind: 'reset' }] },
+  };
+  const left: Row[] = [
+    head('系統設定'),
+    ...SYSTEM_ITEMS.map((t, i): Row => {
+      const activate = leftAction[t];
+      return { text: `  ${t}`, key: `sys:${i}`, ...(activate ? { activate } : {}) };
+    }),
+  ];
   const item = Math.max(0, Math.min(SYSTEM_ITEMS.length - 1, s.cursor[0] - 1));
   return { panes: [left, systemRight(s, d, item)], leftWidth: 20, help: HELP.twoPane };
 }
