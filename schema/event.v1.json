@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/thu-ilearn/schema/event.v1.json",
+  "title": "thu-ilearn.event.v1",
+  "type": "object",
+  "required": [
+    "schema", "event_id", "type", "detected_at", "deliver_after", "delivery",
+    "categories", "matched_rules", "course", "item", "summary", "dedupe_key"
+  ],
+  "properties": {
+    "schema": { "const": "thu-ilearn.event.v1" },
+    "event_id": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "type": {
+      "enum": [
+        "assignment.new", "assignment.due_reminder", "assignment.returned",
+        "exam.new", "exam.reminder", "video.new", "announcement.new",
+        "material.new", "survey.new", "course.info_changed", "grade.posted",
+        "feedback.posted", "auth.expired", "sync.incomplete", "sync.initial_completed"
+      ]
+    },
+    "detected_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\+08:00$" },
+    "deliver_after": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\+08:00$" },
+    "delivery": { "enum": ["force_push", "push", "record"] },
+    "categories": { "type": "array", "items": { "type": "string" } },
+    "matched_rules": { "type": "array", "items": { "type": "string" } },
+    "course": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["id", "name", "semester"],
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "semester": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "item": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["id", "kind", "title", "due_at", "url"],
+          "properties": {
+            "id": { "type": "string" },
+            "kind": {
+              "enum": [
+                "assignment", "exam", "video", "announcement", "material",
+                "survey", "course_info", "grade", "feedback", "system"
+              ]
+            },
+            "title": { "type": "string" },
+            "due_at": { "type": ["string", "null"] },
+            "url": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "summary": { "type": ["string", "null"] },
+    "dedupe_key": { "type": "string", "minLength": 1 },
+    "offset": { "type": "string" },
+    "reason": { "const": "reload" },
+    "reload_id": { "type": "string" },
+    "note": { "type": "string" }
+  }
+}
