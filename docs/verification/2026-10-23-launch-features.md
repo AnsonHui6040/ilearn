@@ -37,6 +37,8 @@
 
 ## 真機測試步驟
 
+可以改用自動測試腳本：`scripts/device-test/`（macOS `macos.sh`、Linux `linux.sh`、Windows `windows.ps1`，說明見該資料夾的 README.md）。腳本在全新的暫存資料夾登入並執行步驟 1 至 5，報告與日誌寫入 `scripts/device-test/logs/`。以下是手動步驟。
+
 在測試用的資料夾副本進行，不影響正在執行的背景服務與 `~/.thu-ilearn`。每一步的「預期」符合就把上表對應項目改為 PASS。
 
 ### 0. 準備

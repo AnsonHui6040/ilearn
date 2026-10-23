@@ -22,6 +22,7 @@ export function backendFor(ctx: CliContext): CredentialBackend {
 
 /** 登入並保存 session 與學號；成功後 ctx.api 改用新 session。 */
 export async function loginWith(ctx: CliContext, username: string, password: string): Promise<void> {
+  if (ctx.auth) return ctx.auth.login(ctx, username, password);
   const http = createHttp({});
   const { userId } = await login(http, username, password);
   saveSession(ctx.root, http.exportCookies());
@@ -48,6 +49,7 @@ async function defaultRelogin(ctx: CliContext): Promise<boolean> {
 
 /** 已保存的 session 是否仍可用；沒有 session、網路不通都視為不可用。 */
 export async function savedSessionUser(ctx: CliContext): Promise<{ userId: number } | null> {
+  if (ctx.auth) return ctx.auth.sessionUser(ctx);
   const cookies = loadSession(ctx.root);
   if (cookies === null || ctx.username === null) return null;
   try {
