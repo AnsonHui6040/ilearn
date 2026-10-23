@@ -592,8 +592,14 @@ async function main() {
       return;
     }
     const { confirm } = await import('@inquirer/prompts');
+    const changes = state.mods.tuiData.loadTuiData(ctx).agentChanges.length;
+    const expected = `agent 最近 7 日修改了 ${changes} 項設定，詳情見 3 提醒`;
+    logLine(`目視前：測試資料夾有 ${changes} 項 agent 修改紀錄`);
+    say(`  開啟後請看「1 首頁」最上方、「需要處理」那一行的上面，應該有一行粗體字：`);
+    say(`  ${expected}`);
     if (await confirm({ message: '要開啟 ilearn ui（測試資料夾）檢查首頁提示嗎？按 q 離開 ui 後會回到這裡', default: false })) {
-      spawnSync(process.execPath, [join(dist, 'cli', 'index.js'), 'ui'], { stdio: 'inherit', env: { ...process.env, ILEARN_HOME: state.root } });
+      const r = spawnSync(process.execPath, [join(dist, 'cli', 'index.js'), 'ui'], { stdio: 'inherit', env: { ...process.env, ILEARN_HOME: state.root } });
+      logLine(`ilearn ui 結束：exit=${r.status ?? 'null'} signal=${r.signal ?? 'null'}${r.error ? ` error=${r.error.message}` : ''}`);
       const ok = await confirm({ message: '首頁最上方有看到「agent 最近 7 日修改了…」的提示嗎？', default: false });
       manual.push(`ui 首頁提示可見：${ok ? 'PASS' : 'FAIL'}（使用者自己回答）`);
       check('ui 首頁提示可見（使用者回答）', ok, '使用者回答沒有看到');
