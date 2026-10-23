@@ -13,6 +13,7 @@ import {
   applyChanges,
   applyDelivery,
   applyInterfaces,
+  nextRuleId,
   parseKeywords,
   previewRule,
   ruleIdError,
@@ -455,5 +456,12 @@ describe('reset backup', () => {
     expect(readFileSync(join(ctx.root, 'config.yaml.bak'), 'utf8')).toBe(oldCfg);
     expect(readFileSync(join(ctx.root, 'rules.yaml.bak'), 'utf8')).toBe(oldRules);
     expect(previewChanges(ctx, [{ kind: 'reset' }]).join('\n')).toContain('config.yaml.bak');
+  });
+});
+
+describe('nextRuleId', () => {
+  it('picks the first unused custom id', () => {
+    expect(nextRuleId(DEFAULT_RULES)).toBe('custom_1');
+    expect(nextRuleId([...DEFAULT_RULES, { ...DEFAULT_RULES[0]!, id: 'custom_1' }, { ...DEFAULT_RULES[0]!, id: 'custom_3' }])).toBe('custom_2');
   });
 });

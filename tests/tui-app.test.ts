@@ -85,9 +85,19 @@ const fakeService = () => {
   };
 };
 
+const fakeRemoval = () => {
+  const calls: { removeData: boolean }[] = [];
+  return {
+    calls,
+    plan: (removeData: boolean) => ({ removeData, dataRoot: '/d', programDir: '/p', deleteProgramDir: true, lines: ['移除背景服務'] }),
+    execute: async (plan: { removeData: boolean }) => (calls.push({ removeData: plan.removeData }), ['thu-ilearn 已完全移除']),
+  };
+};
+
 const deps = (over: Partial<Parameters<typeof runUi>[2]> = {}) => ({
   prompts: noPrompts,
   service: fakeService(),
+  removal: fakeRemoval(),
   opener: () => ({ ok: true, message: '已開啟' }),
   clock: fakeClock(),
   color: false,
@@ -279,6 +289,7 @@ describe('settings prompts', () => {
     const inputs = ['考試／測驗', '期末考、final', '', '成績'];
     const prompts: PromptDeps = {
       ...noPrompts,
+      checkbox: (() => Promise.resolve(['all'])) as PromptDeps['checkbox'],
       input: () => Promise.resolve(inputs.shift() ?? ''),
       select: (() => Promise.resolve('push')) as PromptDeps['select'],
       confirm: () => Promise.resolve(true),
@@ -299,9 +310,11 @@ describe('settings prompts', () => {
   it('adds a new rule', async () => {
     const { ctx } = seeded();
     const t = fakeTerm();
-    const inputs = ['field_trip', '校外教學', '參訪、校外教學', '', ''];
+    const inputs = ['校外教學', '參訪、校外教學', '', ''];
+    let scopeChoices: { name: string; value: unknown }[] = [];
     const prompts: PromptDeps = {
       ...noPrompts,
+      checkbox: ((o: { choices: { name: string; value: unknown }[] }) => ((scopeChoices = o.choices), Promise.resolve(['1']))) as PromptDeps['checkbox'],
       input: () => Promise.resolve(inputs.shift() ?? ''),
       select: (() => Promise.resolve('push')) as PromptDeps['select'],
       confirm: () => Promise.resolve(true),
@@ -310,7 +323,8 @@ describe('settings prompts', () => {
     await tick();
     for (const k of ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'right', 'pagedown', 'pagedown', 'pagedown', 'pagedown', 'up', 'enter'] as const) t.press(k);
     await settle();
-    expect(ctx.rules.at(-1)).toMatchObject({ id: 'field_trip', name: '校外教學', any: ['參訪', '校外教學'], enabled: true, action: 'push' });
+    expect(scopeChoices.map((c) => c.name)).toEqual(['全部課程', '1236 數位行銷']);
+    expect(ctx.rules.at(-1)).toMatchObject({ id: 'custom_1', name: '校外教學', scope: ['1'], any: ['參訪', '校外教學'], enabled: true, action: 'push' });
     t.press('q');
     await done;
   });
@@ -358,6 +372,46 @@ describe('background service', () => {
     for (let i = 0; i < 5; i++) await tick();
     expect(service.status().installed).toBe(true);
     expect(last(t)).toContain('已安裝背景服務');
+    t.press('q');
+    await done;
+  });
+});
+
+describe('complete removal', () => {
+  const toRemoval = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const; // 完全移除
+
+  it('removes the program after typing the confirmation and closes the UI', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const removal = fakeRemoval();
+    const prompts: PromptDeps = {
+      ...noPrompts,
+      select: (() => Promise.resolve('program')) as PromptDeps['select'],
+      input: () => Promise.resolve('確認移除'),
+    };
+    const done = runUi(ctx, t, deps({ prompts, removal }));
+    await tick();
+    for (const k of toRemoval) t.press(k);
+    await done;
+    expect(removal.calls).toEqual([{ removeData: false }]);
+    expect(t.out.join('')).toContain('thu-ilearn 已完全移除');
+  });
+
+  it('cancels when the confirmation text does not match', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const removal = fakeRemoval();
+    const prompts: PromptDeps = {
+      ...noPrompts,
+      select: (() => Promise.resolve('all')) as PromptDeps['select'],
+      input: () => Promise.resolve('好'),
+    };
+    const done = runUi(ctx, t, deps({ prompts, removal }));
+    await tick();
+    for (const k of toRemoval) t.press(k);
+    for (let i = 0; i < 5; i++) await tick();
+    expect(removal.calls).toEqual([]);
+    expect(last(t)).toContain('已取消，沒有移除任何東西');
     t.press('q');
     await done;
   });

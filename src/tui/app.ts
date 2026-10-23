@@ -10,11 +10,15 @@ import { dataRoot } from '../config/paths.js';
 import {
   defaultServiceDeps, defaultServiceSpec, installService, serviceStatus, uninstallService, type ServiceStatus,
 } from '../service/service.js';
+import {
+  currentProgramDir, isThuIlearnPackage, planUninstall, removeDirRecursive, runUninstall, type UninstallPlan,
+} from '../service/uninstall.js';
+import { homedir } from 'node:os';
 import { CliExit, reloadSettings, type CliContext } from '../cli/context.js';
 import type { Delivery } from '../types.js';
 import {
   applyChanges, applyCourseRuleAction, applyDelivery, applyInterfaces, applyQuietHours, applyReminderOffsets,
-  OFFSET_CHOICES, parseKeywords, previewChanges, previewRule, ruleIdError, saveRule,
+  nextRuleId, OFFSET_CHOICES, parseKeywords, previewChanges, previewRule, saveRule,
 } from './actions.js';
 import { courseDetail, loadTuiData, type TuiData } from './data.js';
 import { bodyRows, MIN_COLS, MIN_ROWS, renderFrame, visibleStart } from './frame.js';
@@ -42,6 +46,7 @@ export interface PromptDeps {
 export interface UiDeps {
   prompts: PromptDeps;
   service: { status(): ServiceStatus; install(): string; uninstall(): string };
+  removal: { plan(removeData: boolean): UninstallPlan; execute(plan: UninstallPlan): Promise<string[]> };
   opener: (t: OpenTarget) => { ok: boolean; message: string };
   clock: { every(ms: number, fn: () => void): () => void };
   color: boolean;
@@ -117,7 +122,7 @@ export function nodeTerm(input: NodeJS.ReadStream = process.stdin, output: NodeJ
   };
 }
 
-export async function defaultDeps(): Promise<UiDeps> {
+export async function defaultDeps(ctx: CliContext): Promise<UiDeps> {
   const p = await import('@inquirer/prompts');
   return {
     prompts: p as unknown as PromptDeps,
@@ -125,6 +130,17 @@ export async function defaultDeps(): Promise<UiDeps> {
       status: () => serviceStatus(defaultServiceDeps()),
       install: () => `已安裝背景服務：${installService(defaultServiceDeps(), defaultServiceSpec(dataRoot())).detail}`,
       uninstall: () => uninstallService(defaultServiceDeps()),
+    },
+    removal: {
+      plan: (removeData) =>
+        planUninstall({ removeData, dataRoot: ctx.root, programDir: currentProgramDir(), home: homedir(), isPackage: isThuIlearnPackage }),
+      execute: (plan) =>
+        runUninstall(plan, {
+          uninstallService: () => uninstallService(defaultServiceDeps()),
+          logout: () => logout(ctx),
+          removeDir: removeDirRecursive,
+          run: (cmd, args) => defaultServiceDeps().run(cmd, args),
+        }),
     },
     opener: defaultOpener(process.platform, process.env),
     clock: { every: (ms, fn) => {
@@ -206,7 +222,8 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
       enter();
       busy = false;
     }
-    refresh(message);
+    // 完全移除後資料可能已刪除，不再重新讀取
+    if (!quitAfter) refresh(message);
   };
 
   const LEVELS: { name: string; value: Delivery }[] = [
@@ -221,8 +238,17 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     reloadSettings(ctx);
     const old = ruleId === null ? undefined : ctx.rules.find((r) => r.id === ruleId);
     if (ruleId !== null && !old) return `找不到通知規則 ${ruleId}`;
-    const id = old?.id ?? (await prompts.input({ message: '規則代碼（小寫英文、數字、底線）', validate: (v) => ruleIdError(ctx.rules, v.trim()) ?? true })).trim();
+    const id = old?.id ?? nextRuleId(ctx.rules);
     const name = (await prompts.input({ message: '名稱', ...(old ? { default: old.name } : {}), validate: (v) => v.trim() !== '' || '請輸入名稱' })).trim();
+    const oldScope = old?.scope ?? 'all';
+    const picked = await prompts.checkbox<string>({
+      message: '適用課程（選「全部課程」或剔選個別課程）',
+      choices: [
+        { name: '全部課程', value: 'all', checked: oldScope === 'all' },
+        ...data.courses.map((c) => ({ name: `${c.code} ${c.name}`, value: c.id, checked: oldScope !== 'all' && oldScope.includes(c.id) })),
+      ],
+    });
+    const scope: Rule['scope'] = picked.includes('all') || picked.length === 0 ? 'all' : picked;
     const words = (message: string, now: string[] | undefined) =>
       prompts.input({ message: `${message}（以逗號或「、」分隔，可留空）`, ...(now?.length ? { default: now.join('、') } : {}) });
     const any = parseKeywords(await words('任一關鍵詞', old?.any));
@@ -230,7 +256,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     const none = parseKeywords(await words('排除詞', old?.none));
     const action = await prompts.select<Delivery>({ message: '推送等級', choices: LEVELS, default: old?.action ?? 'push' });
     const rule: Rule = {
-      id, name, enabled: old?.enabled ?? true, scope: old?.scope ?? 'all', fields: old?.fields ?? ['title', 'body'],
+      id, name, enabled: old?.enabled ?? true, scope, fields: old?.fields ?? ['title', 'body'],
       any, all, none, regex: old?.regex ?? [], action,
     };
     if (any.length + all.length + rule.regex.length === 0) throw new CliExit(1, '至少要有一個關鍵詞，沒有儲存');
@@ -321,6 +347,32 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     return '已更新推送等級';
   };
 
+  let quitAfter = false;
+  let finish: (() => void) | null = null;
+
+  /** 完全移除：選擇範圍、列出清單、輸入確認文字後才執行，完成後關閉介面。 */
+  const removeEverything = async (): Promise<string | null> => {
+    const cancelled = '已取消，沒有移除任何東西';
+    const choice = await deps.prompts.select<'program' | 'all' | 'cancel'>({
+      message: '要移除哪些項目？',
+      choices: [
+        { name: '只移除程式（保留 ~/.thu-ilearn 資料夾）', value: 'program' },
+        { name: '移除程式與資料夾（包括已下載的教材與登入資料）', value: 'all' },
+        { name: '取消', value: 'cancel' },
+      ],
+      default: 'cancel',
+    });
+    if (choice === 'cancel') return cancelled;
+    const plan = deps.removal.plan(choice === 'all');
+    term.write(`\r\n將會：\r\n${plan.lines.map((l) => `  ${l}`).join('\r\n')}\r\n\r\n`);
+    const typed = await deps.prompts.input({ message: '請輸入「確認移除」繼續，其他內容即取消' });
+    if (typed.trim() !== '確認移除') return cancelled;
+    const results = await deps.removal.execute(plan);
+    term.write(`${results.join('\r\n')}\r\n`);
+    quitAfter = true;
+    return results.at(-1) ?? null;
+  };
+
   const runOutside = async (what: RunKind): Promise<string | null> => {
     if (what === 'sync') {
       term.write('同步中，請稍候\r\n');
@@ -332,9 +384,10 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
       await runLogin(ctx);
       return '已重新登入';
     }
+    if (what === 'uninstallAll') return removeEverything();
     if (what === 'serviceInstall') return deps.service.install();
     if (what === 'serviceUninstall') {
-      if (!(await deps.prompts.confirm({ message: '要移除背景服務嗎？之後不會自動同步與提醒', default: false }))) return '沒有移除';
+      if (!(await deps.prompts.confirm({ message: '要移除背景服務嗎？之後不會自動同步與提醒', default: false }))) return '沒有移除，背景服務仍在執行';
       return deps.service.uninstall();
     }
     if (!(await deps.prompts.confirm({ message: '要登出嗎？session 與已保存的密碼都會刪除', default: false }))) return '沒有登出';
@@ -389,6 +442,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
         return;
       case 'run':
         await outside(() => runOutside(effect.what));
+        if (quitAfter) finish?.();
         return;
       case 'quit':
         return;
@@ -404,6 +458,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
   let stopClock = (): void => {};
   try {
     await new Promise<void>((resolve, reject) => {
+      finish = resolve;
       /** callback 內的例外一律交給 reject，讓 finally 還原終端。 */
       const guard = (fn: () => void): void => {
         try {

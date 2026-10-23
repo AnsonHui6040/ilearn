@@ -66,10 +66,21 @@ export function formatValidation(v: Validation): string {
   return lines.join('\n');
 }
 
+/** 沒有設定 $EDITOR 時預設用 nano，並先說明如何儲存與離開。 */
+export function pickEditor(env: NodeJS.ProcessEnv, has: (cmd: string) => boolean): { cmd: string; hint: string | null } {
+  const set = env.EDITOR || env.VISUAL;
+  if (set) return { cmd: set, hint: null };
+  if (has('nano')) return { cmd: 'nano', hint: '編輯器 nano：Ctrl-O 再按 Enter 儲存，Ctrl-X 離開' };
+  return { cmd: 'vi', hint: '編輯器 vi：按 Esc 後輸入 :wq 再按 Enter 儲存並離開，輸入 :q! 放棄' };
+}
+
+const hasCommand = (cmd: string): boolean => spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0;
+
 function defaultEditor(path: string): void {
-  const editor = process.env.EDITOR ?? process.env.VISUAL ?? 'vi';
-  const r = spawnSync(`${editor} ${JSON.stringify(path)}`, { stdio: 'inherit', shell: true });
-  if (r.status !== 0) throw new CliExit(1, `編輯器異常結束（${editor}）`);
+  const { cmd, hint } = pickEditor(process.env, hasCommand);
+  if (hint) process.stderr.write(`${hint}\n`);
+  const r = spawnSync(`${cmd} ${JSON.stringify(path)}`, { stdio: 'inherit', shell: true });
+  if (r.status !== 0) throw new CliExit(1, `編輯器異常結束（${cmd}）`);
 }
 
 export interface EditDeps {

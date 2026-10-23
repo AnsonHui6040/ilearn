@@ -224,6 +224,14 @@ export function parseKeywords(s: string): string[] {
   return s.split(/[,，、]/).map((k) => k.trim()).filter((k) => k !== '');
 }
 
+/** 新規則的代碼：custom_1、custom_2…中第一個未使用的。 */
+export function nextRuleId(rules: Rule[]): string {
+  const used = new Set(rules.map((r) => r.id));
+  let n = 1;
+  while (used.has(`custom_${n}`)) n++;
+  return `custom_${n}`;
+}
+
 export function ruleIdError(rules: Rule[], id: string): string | null {
   if (!/^[a-z][a-z0-9_]{0,39}$/.test(id)) return '代碼只能用小寫英文字母、數字與底線，並以字母開頭';
   return rules.some((r) => r.id === id) ? '代碼已存在' : null;

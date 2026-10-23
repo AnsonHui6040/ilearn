@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { chooseBackend, savePassword, VPS_RISK_WARNING } from '../auth/credentials.js';
@@ -82,6 +82,9 @@ export function formatFetchDone(initial: boolean, p: SyncProgress): string {
 }
 
 const yn = (v: boolean): string => (v ? 'Y' : 'N');
+
+/** 輸入密碼時每個字顯示一個 *，讓使用者知道有輸入。 */
+export const PASSWORD_PROMPT = { message: 'iLearn 密碼（輸入時以 * 顯示）', mask: '*' };
 
 export const DEFAULT_WEBHOOK_URL = 'http://127.0.0.1:8787/ilearn';
 
@@ -206,7 +209,7 @@ async function promptCredentials(
 ): Promise<{ username: string; password: string }> {
   for (;;) {
     const username = (await p.input({ message: '學號', ...(ctx.username ? { default: ctx.username } : {}) })).trim();
-    const password = await p.password({ message: 'iLearn 密碼（輸入時不會顯示）' });
+    const password = await p.password(PASSWORD_PROMPT);
     try {
       await loginWith(ctx, username, password);
       return { username, password };
@@ -267,11 +270,31 @@ export async function runSetup(ctx: CliContext): Promise<void> {
   const p = await import('@inquirer/prompts');
   const hadConfig = existsSync(join(ctx.root, 'config.yaml'));
   const d = setupDefaults(hadConfig ? ctx.config : null, detectEnvironment(process.env));
+  const t = setupTracker(ctx.root);
   say('thu-ilearn 設定精靈');
   say('本工具為非官方工具，資料只存在這台電腦，使用前請自行查閱學校資訊使用規範。');
+  if (t.resuming) say(`上次設定在中途中斷，已完成的步驟（${t.completed.join('、')}）會略過。`);
   say();
 
   // 步驟 1：環境
+  if (t.skip(1)) skipped(1, '執行環境');
+  else await askEnvironment(ctx, p, d, t);
+
+  // 步驟 2、3：登入與密碼
+  const existing = await savedSessionUser(ctx);
+  if (t.skip(2) && existing !== null) {
+    ctx.userId = existing.userId;
+    skipped(2, '登入 iLearn');
+    skipped(3, '保存密碼');
+  } else {
+    await askLogin(ctx, p, d, existing);
+    t.done(2);
+    t.done(3);
+  }
+  await setupRest(ctx, p, d, t);
+}
+
+async function askEnvironment(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
   header(1, '執行環境');
   ctx.config.environment = await p.select({
     message: '目前的執行環境',
@@ -284,11 +307,12 @@ export async function runSetup(ctx: CliContext): Promise<void> {
   });
   saveConfig(ctx.config, ctx.root);
   saved(ctx.config.environment === 'vps' ? 'VPS 或雲端主機' : '本機桌面');
+  t.done(1);
+}
 
-  // 步驟 2、3：登入與密碼
+async function askLogin(ctx: CliContext, p: Prompts, d: SetupDefaults, existing: { userId: number } | null): Promise<void> {
   header(2, '登入 iLearn');
   let reuse = false;
-  const existing = await savedSessionUser(ctx);
   if (existing !== null && ctx.username !== null) {
     reuse = await p.confirm({ message: `目前已登入（學號 ${ctx.username}），要沿用這次登入嗎？`, default: true, transformer: yn });
     if (reuse) ctx.userId = existing.userId;
@@ -304,15 +328,21 @@ export async function runSetup(ctx: CliContext): Promise<void> {
       await askSavePassword(ctx, p, username, password, d.passwordSaved);
     });
   }
+}
 
+async function setupRest(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
   // 首次提取在背景進行
   const ac = new AbortController();
   ctx.api = abortableApi(ctx.api, ac.signal);
   ctx.wrapApi = (api) => abortableApi(api, ac.signal);
   const wasCompleted = getSyncState(ctx.db).initial_completed;
+  // 中途中斷後重跑且首次提取早已完成：不再重新讀取一次
+  const skipFetch = t.resuming && wasCompleted;
   let printing = false;
   let lastProgress: SyncProgress = { coursesDone: 0, coursesTotal: 0, filesDone: 0, filesTotal: 0, bytes: 0 };
-  const settled: Promise<{ ok: true; outcome: SyncOutcome } | { ok: false; error: unknown }> = syncCommand(ctx, {
+  const settled: Promise<{ ok: true; outcome: SyncOutcome } | { ok: false; error: unknown }> = skipFetch
+    ? Promise.resolve({ ok: true as const, outcome: { skipped: true } })
+    : syncCommand(ctx, {
     force: true,
     onProgress: (pr) => {
       lastProgress = pr;
@@ -328,11 +358,12 @@ export async function runSetup(ctx: CliContext): Promise<void> {
     say('\n已中斷，下次執行 ilearn sync 會從中斷處繼續');
   };
   process.on('SIGINT', onSigint);
-  say(wasCompleted ? '背景同步已開始，請繼續完成其餘設定。' : '首次提取已在背景開始，請繼續完成其餘設定。');
+  if (skipFetch) say('首次提取已完成，不再重新讀取。');
+  else say(wasCompleted ? '背景同步已開始，請繼續完成其餘設定。' : '首次提取已在背景開始，請繼續完成其餘設定。');
   say();
 
   try {
-    await askRemaining(ctx, p, d);
+    await askRemaining(ctx, p, d, t);
 
     printing = true;
     const result = await settled;
@@ -345,10 +376,12 @@ export async function runSetup(ctx: CliContext): Promise<void> {
       throw new CliExit(1, `首次提取沒有完成：${e instanceof Error ? e.message : String(e)}，之後執行 ilearn sync 會繼續`);
     }
     const report = result.outcome.report;
-    say(formatFetchDone(!wasCompleted, lastProgress));
-    say();
+    if (!skipFetch) {
+      say(formatFetchDone(!wasCompleted, lastProgress));
+      say();
+    }
 
-    await askSummaries(ctx, p, d);
+    await askSummaries(ctx, p, d, t);
 
     // 完成摘要
     if (report) say(formatSummary(report, summaryExtras(ctx.db, ctx.now())));
@@ -358,6 +391,7 @@ export async function runSetup(ctx: CliContext): Promise<void> {
       install: () => installService(defaultServiceDeps(), defaultServiceSpec(ctx.root)),
     });
     say('要把現有事項推送給 agent，請執行 ilearn reload。');
+    t.finish();
   } catch (e) {
     ac.abort();
     await settled;
@@ -368,7 +402,19 @@ export async function runSetup(ctx: CliContext): Promise<void> {
   }
 }
 
-async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Promise<void> {
+export async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
+  if (t.skip(4)) skipped(4, '要啟用的介面');
+  else await askInterfaces(ctx, p, d, t);
+  if (t.skip(5)) skipped(5, '推送方式');
+  else await askDelivery(ctx, p, t);
+  if (t.skip(6)) skipped(6, '通知規則');
+  else {
+    await askRules(ctx, p);
+    t.done(6);
+  }
+}
+
+async function askInterfaces(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
   header(4, '要啟用的介面');
   const ifaces = await p.checkbox({
     message: '要啟用的介面',
@@ -388,7 +434,10 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
   };
   saveConfig(ctx.config, ctx.root);
   saved(ctx.config.interfaces.folder ? '終端機、資料夾（Markdown 檢視）' : '終端機');
+  t.done(4);
+}
 
+async function askDelivery(ctx: CliContext, p: Prompts, t: SetupTracker): Promise<void> {
   header(5, '推送方式');
   const dl = ctx.config.delivery;
   const ways = await p.checkbox({
@@ -424,11 +473,48 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
   ctx.config.delivery = next;
   saveConfig(ctx.config, ctx.root);
   saved(deliverySummary(next));
-
-  await askRules(ctx, p);
+  t.done(5);
 }
 
 const LATER = '之後可以執行 ilearn service install，或在 ilearn ui 的系統設定安裝';
+
+export interface SetupTracker {
+  /** 上次中途中斷，這次從未完成的步驟繼續 */
+  resuming: boolean;
+  completed: number[];
+  skip(step: number): boolean;
+  done(step: number): void;
+  finish(): void;
+}
+
+/** 記錄設定精靈完成到哪一步；中途中斷後重跑時略過已完成的步驟，全部完成後下次重新逐步詢問。 */
+export function setupTracker(root: string): SetupTracker {
+  const file = join(root, 'data', 'setup-progress.json');
+  let saved: { done: number[]; finished: boolean } = { done: [], finished: true };
+  try {
+    saved = JSON.parse(readFileSync(file, 'utf8')) as typeof saved;
+  } catch {
+    // 沒有紀錄時視為全新開始
+  }
+  const resuming = !saved.finished && saved.done.length > 0;
+  const done = new Set(resuming ? saved.done : []);
+  const write = (finished: boolean): void => writeSecureFile(file, JSON.stringify({ done: [...done].sort((a, b) => a - b), finished }));
+  return {
+    resuming,
+    completed: [...done].sort((a, b) => a - b),
+    skip: (step) => resuming && saved.done.includes(step),
+    done: (step) => {
+      done.add(step);
+      write(false);
+    },
+    finish: () => write(true),
+  };
+}
+
+const skipped = (step: number, title: string): void => {
+  header(step, title);
+  ok('已完成，略過');
+};
 
 /** 完成前詢問是否安裝背景服務；已安裝則不再詢問。 */
 export async function askService(
@@ -499,7 +585,12 @@ function applySummaries(
 
 const countText = (n: number): string => (n === 0 ? '沒有選擇任何課程' : `${n} 門課程`);
 
-async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults): Promise<void> {
+async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
+  if (t.skip(7) && t.skip(8)) {
+    skipped(7, '教材檔案摘要');
+    skipped(8, '老師公告摘要');
+    return;
+  }
   const courses = ctx.db
     .prepare('SELECT id, name FROM courses WHERE semester = (SELECT MAX(semester) FROM courses) ORDER BY name')
     .all() as unknown as { id: string; name: string }[];
@@ -529,4 +620,6 @@ async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
   const announcements = await pick('啟用「老師公告摘要」的課程（沒有剔選的課程只顯示標題）', d.announcements);
   applySummaries(ctx, courses, materials, announcements);
   saved(`老師公告摘要：${countText(announcements.size)}`);
+  t.done(7);
+  t.done(8);
 }
