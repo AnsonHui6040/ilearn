@@ -9,6 +9,7 @@ import {
 import type { CliContext } from '../cli/context.js';
 import type { Config } from '../config/config.js';
 import { reminderSent } from '../db/repo.js';
+import { summariesWrittenToday } from '../summaries/summaries.js';
 import { courseCode, slotLabel } from '../domain/schedule.js';
 import type { ScheduleSlot } from '../ilearn/courseInfo.js';
 import type { Rule } from '../rules/engine.js';
@@ -68,6 +69,8 @@ export interface TuiData {
   notices: string[];
   rules: Rule[];
   config: Config;
+  /** 今天已由 agent 寫入的摘要數 */
+  summariesToday: number;
   /** 背景服務狀態，由介面另外取得 */
   service?: ServiceStatus;
   /** 系統更新狀態，由介面另外取得 */
@@ -236,6 +239,7 @@ export function loadTuiData(ctx: CliContext): TuiData {
     notices: notices(ctx, status),
     rules: ctx.rules,
     config: ctx.config,
+    summariesToday: summariesWrittenToday(ctx),
   };
 }
 

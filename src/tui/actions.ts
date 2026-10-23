@@ -11,7 +11,7 @@ import { webhookUrlError } from '../events/dispatch.js';
 import { parseIsoDuration } from '../time.js';
 import type { Delivery } from '../types.js';
 import { displayName } from './data.js';
-import type { Change } from './state.js';
+import { SUMMARY_LABEL, type Change } from './state.js';
 
 export const OFFSET_CHOICES: string[] = ['P3D', 'P2D', 'P1D', 'PT12H', 'PT6H', 'PT3H', 'PT1H'];
 
@@ -55,6 +55,12 @@ export function previewChanges(ctx: CliContext, changes: Change[]): string[] {
         break;
       case 'courseRule':
         lines.push(`${courseName(ctx, c.courseId)}「${ruleName(ctx.rules, c.ruleId)}」：${onOff(c.enabled)}`);
+        break;
+      case 'courseSummary':
+        lines.push(`${courseName(ctx, c.courseId)}「${SUMMARY_LABEL[c.summary]}」：${onOff(c.enabled)}`);
+        break;
+      case 'agentWrite':
+        lines.push(`允許 agent 寫入摘要：${c.enabled ? '允許' : '不允許'}`);
         break;
       case 'reset':
         lines.push('全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留');
@@ -146,6 +152,21 @@ export function applyChanges(ctx: CliContext, changes: Change[]): { applied: num
         applied++;
         break;
       }
+      case 'courseSummary': {
+        const cur = cfg.summaries.courses[c.courseId] ?? { materials: false, announcements: false };
+        const next = { ...cur, [c.summary]: c.enabled };
+        // 兩種摘要都關閉時不留空項目，與設定精靈一致
+        if (next.materials || next.announcements) cfg.summaries.courses[c.courseId] = next;
+        else delete cfg.summaries.courses[c.courseId];
+        cfgDirty = true;
+        applied++;
+        break;
+      }
+      case 'agentWrite':
+        cfg.summaries.agent_write = c.enabled;
+        cfgDirty = true;
+        applied++;
+        break;
       case 'reset':
         cfg = { ...structuredClone(DEFAULT_CONFIG), environment: cfg.environment, password_saved: cfg.password_saved };
         rules = structuredClone(DEFAULT_RULES);

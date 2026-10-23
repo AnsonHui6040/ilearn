@@ -14,7 +14,12 @@ export interface Config {
   quiet_hours: { start: string; end: string };
   reminders: { offsets: string[] };
   force_push_offsets: string[];
-  summaries: { daily_limit: number; courses: Record<string, { materials: boolean; announcements: boolean }> };
+  summaries: {
+    daily_limit: number;
+    /** 是否允許 agent 把摘要寫回；預設不允許 */
+    agent_write: boolean;
+    courses: Record<string, { materials: boolean; announcements: boolean }>;
+  };
   course_overrides: Record<
     string,
     { reminders?: string[]; rules?: Record<string, { enabled?: boolean; action?: Delivery }> }
@@ -35,7 +40,7 @@ export const DEFAULT_CONFIG: Config = {
   quiet_hours: { start: '00:00', end: '07:00' },
   reminders: { offsets: ['P1D', 'PT3H'] },
   force_push_offsets: ['PT3H'],
-  summaries: { daily_limit: 20, courses: {} },
+  summaries: { daily_limit: 20, agent_write: false, courses: {} },
   course_overrides: {},
   period_times: structuredClone(THU_PERIOD_TIMES),
   password_saved: false,

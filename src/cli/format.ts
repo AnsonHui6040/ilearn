@@ -1,3 +1,4 @@
+import type { PendingSummaries } from '../summaries/summaries.js';
 import type { IlearnEvent } from '../types.js';
 import type { announcementsCommand, coursesCommand, courseCommand, filesSearchCommand, gradesCommand, statusCommand, tasksCommand } from './commands/query.js';
 
@@ -76,5 +77,12 @@ export function statusText(s: Ret<typeof statusCommand>): string {
     lines.push(`${name}：${parts.join('，')}`);
   }
   if (s.rules_warning) lines.push(`注意：${s.rules_warning}`);
+  return lines.join('\n');
+}
+
+export function pendingSummariesText(r: PendingSummaries): string {
+  const lines = [r.agent_write ? 'agent 可寫入摘要' : 'agent 目前不可寫入摘要（使用者可在 ilearn setup 第 8 步或 ilearn ui 開啟）'];
+  lines.push(`今天還可以寫 ${r.remaining_today} 則，待摘要 ${r.pending.length} 則`);
+  for (const t of r.pending) lines.push(`${t.target_id}  ${t.kind === 'material' ? '教材' : '公告'}  ${t.course.name}  ${t.title}`);
   return lines.join('\n');
 }

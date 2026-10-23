@@ -53,12 +53,12 @@ async function call(c: Client, name: string, args: Record<string, unknown> = {})
 const parse = (r: CallResult): unknown => JSON.parse(r.content[0]?.text ?? 'null');
 
 describe('MCP server', () => {
-  it('exposes exactly the read tools plus events_ack', async () => {
+  it('exposes exactly the read tools plus events_ack and summaries_write', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'ilearn-mcp-')));
     const { tools } = await c.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...MCP_TOOLS].sort());
     for (const t of tools) {
-      expect(t.annotations?.readOnlyHint, t.name).toBe(t.name !== 'events_ack');
+      expect(t.annotations?.readOnlyHint, t.name).toBe(!['events_ack', 'summaries_write'].includes(t.name));
       expect(t.annotations?.destructiveHint ?? false, t.name).toBe(false);
     }
   });

@@ -81,6 +81,19 @@ const MIGRATIONS: readonly string[] = [
   `,
   // 新學期首次同步進行中的學期代碼；NULL 表示沒有
   `ALTER TABLE sync_state ADD COLUMN initializing_semester TEXT;`,
+  // agent 寫回的摘要；source_hash 是寫摘要時的原文雜湊，原文變動後就視為過期
+  `
+  CREATE TABLE summaries (
+    target_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    course_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    text TEXT NOT NULL,
+    agent TEXT,
+    written_at TEXT NOT NULL
+  );
+  CREATE INDEX summaries_course ON summaries(course_id);
+  `,
 ];
 
 export const SCHEMA_VERSION: number = MIGRATIONS.length;

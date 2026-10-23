@@ -593,8 +593,37 @@ function latestCourses(ctx: CliContext): { id: string; name: string }[] {
     .all() as unknown as { id: string; name: string }[];
 }
 
+const hasSummaryCourses = (d: SetupDefaults): boolean => d.materials.length + d.announcements.length > 0;
+
+/**
+ * 第 8 步最後一題：是否允許 agent 寫入摘要。沒有任何課程啟用摘要時不問，直接設為不允許。
+ * priorSaved 表示進入精靈前已經有啟用摘要的課程（也就是之前已回答過）；沒有回答過時預設允許。
+ */
+async function askAgentWrite(ctx: CliContext, p: Prompts, priorSaved: boolean): Promise<void> {
+  const ids = new Set(latestCourses(ctx).map((c) => c.id));
+  const any = Object.entries(ctx.config.summaries.courses).some(([id, v]) => ids.has(id) && (v.materials || v.announcements));
+  let allow = false;
+  if (any) {
+    allow = await p.confirm({
+      message: '允許 agent 寫入摘要嗎？（agent 透過 ilearn summaries write 或 MCP 寫回，本工具不會呼叫任何 AI）',
+      default: ctx.config.summaries.agent_write || !priorSaved,
+      transformer: yn,
+    });
+  }
+  ctx.config.summaries.agent_write = allow;
+  saveConfig(ctx.config, ctx.root);
+  saved(`agent 寫入摘要：${allow ? '允許' : '不允許'}`);
+}
+
 /** 第 7 或第 8 步其中一步；另一步的選擇沿用目前已儲存的設定。 */
-async function askSummaryStep(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker, step: 7 | 8): Promise<void> {
+async function askSummaryStep(
+  ctx: CliContext,
+  p: Prompts,
+  d: SetupDefaults,
+  t: SetupTracker,
+  step: 7 | 8,
+  priorSaved: boolean = hasSummaryCourses(d),
+): Promise<void> {
   header(step, SUMMARY_TITLES[step]);
   const courses = latestCourses(ctx);
   if (courses.length === 0) {
@@ -612,18 +641,20 @@ async function askSummaryStep(ctx: CliContext, p: Prompts, d: SetupDefaults, t: 
   if (step === 7) applySummaries(ctx, courses, chosen, new Set(d.announcements));
   else applySummaries(ctx, courses, new Set(d.materials), chosen);
   saved(`${SUMMARY_TITLES[step]}：${countText(chosen.size)}`);
+  if (step === 8) await askAgentWrite(ctx, p, priorSaved);
   t.done(step);
 }
 
-async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
+export async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
   if (t.skip(7) && t.skip(8)) {
     skipped(7, SUMMARY_TITLES[7]);
     skipped(8, SUMMARY_TITLES[8]);
     return;
   }
-  await askSummaryStep(ctx, p, d, t, 7);
+  const priorSaved = hasSummaryCourses(d);
+  await askSummaryStep(ctx, p, d, t, 7, priorSaved);
   // 第 8 步的預設值要反映剛儲存的第 7 步
-  await askSummaryStep(ctx, p, setupDefaults(ctx.config, d.environment), t, 8);
+  await askSummaryStep(ctx, p, setupDefaults(ctx.config, d.environment), t, 8, priorSaved);
 }
 
 /* ---------- 確認畫面 ---------- */
@@ -653,7 +684,7 @@ export function formatConfirmation(ctx: CliContext): string {
     `5 推送方式：${deliverySummary(cfg.delivery)}`,
     `6 通知規則：啟用 ${on} 條，停用 ${ctx.rules.length - on} 條`,
     `7 ${SUMMARY_TITLES[7]}：${countText(count('materials'))}`,
-    `8 ${SUMMARY_TITLES[8]}：${countText(count('announcements'))}`,
+    `8 ${SUMMARY_TITLES[8]}：${countText(count('announcements'))}；agent 寫入摘要：${cfg.summaries.agent_write ? '允許' : '不允許'}`,
   ].join('\n');
 }
 

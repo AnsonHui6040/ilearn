@@ -267,3 +267,41 @@ export function listFiles(db: DatabaseSync, f: { status?: StoredFile['status']; 
     allow_download: r.allow_download === 1,
   }));
 }
+
+export interface StoredSummary {
+  target_id: string;
+  kind: 'announcement' | 'material';
+  course_id: string;
+  source_hash: string;
+  text: string;
+  agent: string | null;
+  written_at: string;
+}
+
+export function upsertSummary(db: DatabaseSync, s: StoredSummary): void {
+  db.prepare(
+    `INSERT INTO summaries (target_id, kind, course_id, source_hash, text, agent, written_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(target_id) DO UPDATE SET kind = excluded.kind, course_id = excluded.course_id,
+       source_hash = excluded.source_hash, text = excluded.text, agent = excluded.agent,
+       written_at = excluded.written_at`,
+  ).run(s.target_id, s.kind, s.course_id, s.source_hash, s.text, s.agent, s.written_at);
+}
+
+export function listSummaries(db: DatabaseSync): StoredSummary[] {
+  return (db.prepare('SELECT * FROM summaries ORDER BY target_id').all() as Row[]).map((r) => ({
+    target_id: r.target_id as string,
+    kind: r.kind as StoredSummary['kind'],
+    course_id: r.course_id as string,
+    source_hash: r.source_hash as string,
+    text: r.text as string,
+    agent: r.agent as string | null,
+    written_at: r.written_at as string,
+  }));
+}
+
+/** day 為台北日期 YYYY-MM-DD；written_at 以 +08:00 儲存，前 10 碼就是台北日期。 */
+export function countSummariesOn(db: DatabaseSync, day: string): number {
+  const r = db.prepare('SELECT COUNT(*) AS n FROM summaries WHERE substr(written_at, 1, 10) = ?').get(day) as { n: number };
+  return r.n;
+}
