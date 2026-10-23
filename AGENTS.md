@@ -25,6 +25,7 @@
 | `ilearn file text <id>` | 輸出 `.txt`、`.md` 檔案的文字；其他格式回傳「尚未支援」 |
 | `ilearn status --json` | 同步狀態、最近錯誤、首次同步進度 |
 | `ilearn rules list --json` | 目前生效的規則（只讀） |
+| `ilearn service status --json` | 背景服務是否已安裝：`{ installed, method, detail }` |
 
 ## MCP server
 
@@ -124,6 +125,7 @@
 - 修改規則（`rules edit`）、設定檔（包括 hook 指令及 webhook 網址）或 `rules.yaml`。
 - 讀取帳號、密碼、cookie 或 session 檔案。
 - 觸發登入（`ilearn login`、`ilearn setup`）。登入過期時請使用者自己處理。
+- 安裝或移除背景服務（`ilearn service install`、`uninstall` 在非互動終端會被拒絕）。
 - 開啟 `ilearn ui` 代為操作。這是給使用者本人的介面，在非互動終端執行會被拒絕；需要修改設定時請提醒使用者自己開啟。
 - 直接連線 iLearn 或修改 iLearn 上的任何資料。
 

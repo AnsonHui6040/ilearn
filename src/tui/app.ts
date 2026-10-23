@@ -6,6 +6,10 @@ import { logout } from '../cli/auth.js';
 import { DEFAULT_WEBHOOK_URL, formatProgress, runLogin } from '../cli/setup.js';
 import { webhookUrlError } from '../events/dispatch.js';
 import type { Rule } from '../rules/engine.js';
+import { dataRoot } from '../config/paths.js';
+import {
+  defaultServiceDeps, defaultServiceSpec, installService, serviceStatus, uninstallService, type ServiceStatus,
+} from '../service/service.js';
 import { CliExit, reloadSettings, type CliContext } from '../cli/context.js';
 import type { Delivery } from '../types.js';
 import {
@@ -37,6 +41,7 @@ export interface PromptDeps {
 
 export interface UiDeps {
   prompts: PromptDeps;
+  service: { status(): ServiceStatus; install(): string; uninstall(): string };
   opener: (t: OpenTarget) => { ok: boolean; message: string };
   clock: { every(ms: number, fn: () => void): () => void };
   color: boolean;
@@ -116,6 +121,11 @@ export async function defaultDeps(): Promise<UiDeps> {
   const p = await import('@inquirer/prompts');
   return {
     prompts: p as unknown as PromptDeps,
+    service: {
+      status: () => serviceStatus(defaultServiceDeps()),
+      install: () => `已安裝背景服務：${installService(defaultServiceDeps(), defaultServiceSpec(dataRoot())).detail}`,
+      uninstall: () => uninstallService(defaultServiceDeps()),
+    },
     opener: defaultOpener(process.platform, process.env),
     clock: { every: (ms, fn) => {
       const id = setInterval(fn, ms);
@@ -129,7 +139,8 @@ const isPromptExit = (e: unknown): boolean => e instanceof Error && e.name === '
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<void> {
-  let data: TuiData = loadTuiData(ctx);
+  const load = (): TuiData => ({ ...loadTuiData(ctx), service: deps.service.status() });
+  let data: TuiData = load();
   let state: TuiState = initialState();
   let busy = false;
   const src: PageSources = { detail: (id) => courseDetail(ctx, id), preview: (c) => previewChanges(ctx, c) };
@@ -175,7 +186,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
   const refresh = (message: string | null = state.message): void => {
     // 規則檔與設定檔可能在介面外被修改
     reloadSettings(ctx);
-    data = loadTuiData(ctx);
+    data = load();
     state = { ...state, message };
     render();
   };
@@ -320,6 +331,11 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     if (what === 'login') {
       await runLogin(ctx);
       return '已重新登入';
+    }
+    if (what === 'serviceInstall') return deps.service.install();
+    if (what === 'serviceUninstall') {
+      if (!(await deps.prompts.confirm({ message: '要移除背景服務嗎？之後不會自動同步與提醒', default: false }))) return '沒有移除';
+      return deps.service.uninstall();
     }
     if (!(await deps.prompts.confirm({ message: '要登出嗎？session 與已保存的密碼都會刪除', default: false }))) return '沒有登出';
     await logout(ctx);

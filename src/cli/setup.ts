@@ -8,6 +8,7 @@ import { getSyncState, listFiles, listItems } from '../db/repo.js';
 import { AuthError } from '../ilearn/auth.js';
 import { webhookUrlError } from '../events/dispatch.js';
 import { stringifyRules } from '../rules/yaml.js';
+import { defaultServiceDeps, defaultServiceSpec, installService, serviceStatus, type ServiceStatus } from '../service/service.js';
 import type { SyncProgress, SyncReport } from '../sync/sync.js';
 import { toTaipeiIso } from '../time.js';
 import { backendFor, loginWith, savedSessionUser } from './auth.js';
@@ -352,7 +353,10 @@ export async function runSetup(ctx: CliContext): Promise<void> {
     // 完成摘要
     if (report) say(formatSummary(report, summaryExtras(ctx.db, ctx.now())));
     say();
-    say('背景服務註冊：Phase 5 提供。目前可用 cron 定時執行：*/5 * * * * ilearn run');
+    await askService(p, {
+      status: () => serviceStatus(defaultServiceDeps()),
+      install: () => installService(defaultServiceDeps(), defaultServiceSpec(ctx.root)),
+    });
     say('要把現有事項推送給 agent，請執行 ilearn reload。');
   } catch (e) {
     ac.abort();
@@ -422,6 +426,32 @@ async function askRemaining(ctx: CliContext, p: Prompts, d: SetupDefaults): Prom
   saved(deliverySummary(next));
 
   await askRules(ctx, p);
+}
+
+const LATER = '之後可以執行 ilearn service install，或在 ilearn ui 的系統設定安裝';
+
+/** 完成前詢問是否安裝背景服務；已安裝則不再詢問。 */
+export async function askService(
+  p: Pick<Prompts, 'confirm'>,
+  svc: { status: () => ServiceStatus; install: () => { detail: string } },
+): Promise<void> {
+  const st = svc.status();
+  if (st.installed) {
+    ok(`背景服務${st.detail}`);
+    return;
+  }
+  const yes = await p.confirm({ message: '要安裝背景服務，每 5 分鐘自動同步、提醒與推送嗎？', default: true, transformer: yn });
+  if (!yes) {
+    say(LATER);
+    return;
+  }
+  try {
+    saved(`背景服務（${svc.install().detail}）`);
+  } catch (e) {
+    if (!(e instanceof CliExit)) throw e;
+    say(e.message);
+    say(LATER);
+  }
 }
 
 /** 第 6 步：全部取消勾選時先確認，避免誤把規則全部停用。 */

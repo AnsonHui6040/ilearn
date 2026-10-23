@@ -275,6 +275,35 @@ rules
     write(r.saved ? '已儲存 rules.yaml' : '沒有儲存');
   });
 
+const service = program.command('service').description('背景服務：由系統排程每 5 分鐘執行 ilearn run');
+service
+  .command('install')
+  .description('安裝背景服務（只能由本人在互動終端操作）')
+  .action(async () => {
+    const { defaultServiceDeps, defaultServiceSpec } = await import('../service/service.js');
+    const { serviceInstallCommand } = await import('./commands/service.js');
+    const root = dataRoot();
+    const r = serviceInstallCommand({ isTTY: Boolean(process.stdin.isTTY), root, deps: defaultServiceDeps(), spec: defaultServiceSpec(root) });
+    write(`已安裝背景服務：${r.detail}`);
+  });
+service
+  .command('uninstall')
+  .description('移除背景服務（只能由本人在互動終端操作）')
+  .action(async () => {
+    const { defaultServiceDeps } = await import('../service/service.js');
+    const { serviceUninstallCommand } = await import('./commands/service.js');
+    write(serviceUninstallCommand({ isTTY: Boolean(process.stdin.isTTY), deps: defaultServiceDeps() }));
+  });
+service
+  .command('status')
+  .description('背景服務是否已安裝')
+  .option('--json', '以 JSON 輸出')
+  .action(async (o: { json?: boolean }) => {
+    const { defaultServiceDeps, serviceStatus } = await import('../service/service.js');
+    const r = serviceStatus(defaultServiceDeps());
+    out(o.json, r, () => `背景服務：${r.detail}`);
+  });
+
 program
   .command('ui')
   .description('開啟全螢幕介面（只能在互動終端使用）')

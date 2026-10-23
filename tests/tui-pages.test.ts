@@ -159,7 +159,7 @@ describe('5 系統設定', () => {
   it('never shows the hook command or the webhook address', () => {
     const ctx = seeded();
     ctx.config.delivery = { hook: { enabled: true, command: 'secret-hook-cmd' }, webhook: { enabled: true, url: 'http://127.0.0.1:9/secret-path' } };
-    for (let i = 1; i <= 9; i++) {
+    for (let i = 1; i <= 10; i++) {
       const out = text(show(ctx, { ...onTab(5), cursor: [i, 0] }, 100));
       expect(out).not.toContain('secret-hook-cmd');
       expect(out).not.toContain('secret-path');
@@ -198,6 +198,17 @@ describe('5 系統設定 actions', () => {
     const left = buildPage(onTab(5), loadTuiData(ctx), 100, sources(ctx)).panes[0] ?? [];
     expect(left.find((r) => r.text.includes('同步狀態'))?.activate).toEqual({ focusRight: true });
     expect(left.find((r) => r.text.includes('Reload'))?.activate).toEqual({ reload: true });
+  });
+
+  it('installs or removes the background service', () => {
+    const ctx = seeded();
+    const at = (installed: boolean) => {
+      const d = { ...loadTuiData(ctx), service: { installed, method: installed ? ('launchd' as const) : null, detail: installed ? '已安裝（LaunchAgent）' : '未安裝' } };
+      return (buildPage({ ...onTab(5), cursor: [9, 0] }, d, 100, sources(ctx)).panes[1] ?? []);
+    };
+    expect(at(false).map((r) => r.text).join('\n')).toContain('未安裝');
+    expect(at(false).flatMap((r) => (r.activate ? [r.activate] : []))).toContainEqual({ run: 'serviceInstall' });
+    expect(at(true).flatMap((r) => (r.activate ? [r.activate] : []))).toContainEqual({ run: 'serviceUninstall' });
   });
 
   it('shows whether the folder view is on', () => {

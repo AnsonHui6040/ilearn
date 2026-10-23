@@ -339,7 +339,7 @@ Agent 權限：
 2. 完成判定、提醒計時器、規則引擎、推送佇列及 outbox、CLI JSON。
 3. hook／webhook、MCP server、AGENTS.md／SKILL.md。
 4. 終端機全螢幕介面（包括規則試算及設定修改；第 5 版由內聯網網頁改為終端機）。
-5. Windows／macOS 桌面 app 及背景服務。
+5. Windows／macOS 桌面 app 及背景服務。背景服務已完成（2026-10-23）：`ilearn service install` 以 launchd、systemd user timer（或 crontab）、工作排程器每 5 分鐘執行 `ilearn run`；設定精靈與 `ilearn ui` 均可安裝或移除。桌面 app 待重新決定。
 6. 摘要佇列、學期封存、安裝包及發布文件。
 7. **設定修改流程（使用者 2026-10-23 要求，排在最後，開始前先提醒使用者）**：設定完成後不必整個精靈重來即可修改。第 5 版：修改單一設定已併入 Phase 4 終端機介面的課程設定及系統設定頁，本階段只剩精靈最後的確認畫面。
    - 精靈最後加「確認」畫面，列出全部答案；選「修改」可回到指定步驟，已答內容保留為預設值。

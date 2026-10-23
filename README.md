@@ -54,9 +54,7 @@ ilearn setup
 3. 執行 ilearn --version 確認指令可用。
 4. 停下來，請我自己在終端執行 ilearn setup。設定精靈會要求輸入學號與密碼，你不可以代為輸入，也不可以讀取或保存我的帳號密碼。等我回覆「設定完成」再繼續。
 5. 把 thu-ilearn 加入你的 MCP 設定：名稱 thu-ilearn，指令 ilearn，參數 mcp。Claude Code 可以執行 claude mcp add thu-ilearn -- ilearn mcp。
-6. 設定每 5 分鐘執行一次 ilearn run。先用 command -v node 與 command -v ilearn 取得絕對路徑，組成一行 crontab，例如：
-   */5 * * * * /絕對路徑/node /絕對路徑/ilearn run
-   修改 crontab 之前先把這一行給我確認。
+6. 設定精靈最後會詢問是否安裝背景服務。如果我沒有安裝，提醒我自己執行 ilearn service install（需要互動終端，你不可以代為安裝），再用 ilearn service status 確認。
 7. 閱讀 ~/thu-ilearn/AGENTS.md，了解指令、事件格式與權限。如果你支援 Skill，把 ~/thu-ilearn/SKILL.md 加入你的 skill。
 8. 執行 ilearn status --json 與 ilearn tasks --json，用三到五行告訴我同步狀態與未完成的作業數量。
 
@@ -105,15 +103,27 @@ hermes 是你的 agent 名稱，可以換成你自己的名稱，但之後都要
 
 第一次提取可以用 Ctrl-C 中斷，下次執行 `ilearn setup` 或 `ilearn sync` 會從中斷處繼續。第一次提取本身不會推送任何通知；要把目前需要處理的事項推送給 agent，請執行 `ilearn reload`。
 
-背景服務註冊會在後續階段提供，目前請用 cron 定時執行。
+設定精靈最後會詢問是否安裝背景服務。
 
-## 定時執行
+## 背景服務
 
-```cron
-*/5 * * * * ilearn run
+背景服務由系統排程每 5 分鐘執行一次 `ilearn run`：每次都會檢查提醒並送出推送，只在同步時間到了才連線 iLearn（07:00 到 24:00 每小時一次，另加 03:30，每次隨機延遲 0 到 5 分鐘）。
+
+```sh
+ilearn service install     # 安裝（只能在互動終端執行）
+ilearn service status      # 是否已安裝
+ilearn service uninstall   # 移除
 ```
 
-`ilearn run` 每次都會檢查提醒，並且只在同步時間到了才連線 iLearn（07:00 到 24:00 每小時一次，另加 03:30，每次隨機延遲 0 到 5 分鐘）。如果想要常駐程序，可以改用 `ilearn daemon`。
+也可以在 `ilearn ui` 的「系統設定 > 背景服務」安裝或移除。
+
+| 系統 | 排程方式 |
+| --- | --- |
+| macOS | `~/Library/LaunchAgents/thu-ilearn.run.plist` |
+| Linux | systemd user timer `thu-ilearn.timer`；沒有 systemd 時寫入 crontab（以 `# thu-ilearn` 標記） |
+| Windows | 工作排程器 `thu-ilearn` |
+
+執行紀錄寫入 `<資料根>/logs/run.log`。排程使用安裝當下 Node 與程式的絕對路徑，搬移程式位置後請重新安裝。在 VPS 上使用 systemd 時，登出後要繼續執行，請自己執行 `loginctl enable-linger`。如果想要常駐程序，可以改用 `ilearn daemon`。
 
 ## 推送給 agent
 
@@ -139,7 +149,7 @@ delivery:
 | `ilearn ui` | 全螢幕介面：查看待辦、課程、提醒，並修改設定（只能在互動終端使用） |
 | `ilearn login` / `ilearn logout` | 重新登入；刪除 session 與已保存的密碼 |
 | `ilearn sync [--force]` | 立即同步並下載檔案 |
-| `ilearn run` | 給 cron 使用 |
+| `ilearn run` | 背景服務每 5 分鐘執行一次 |
 | `ilearn daemon` | 常駐，每 5 分鐘做一次 `run` |
 | `ilearn reload [--yes]` | 先同步，再把目前需要處理的事項推送出去 |
 | `ilearn tasks [--json]` | 未完成的作業與影片 |
@@ -151,6 +161,7 @@ delivery:
 | `ilearn files search <關鍵字>`、`ilearn file text <id>` | 以檔名搜尋；輸出 .txt 與 .md 的文字 |
 | `ilearn mark-teammate <item_id> [--undo]` | 標記小組作業「隊員已交」，只能由你在互動終端操作 |
 | `ilearn rules list`、`ilearn rules test [檔案]`、`ilearn rules edit` | 列出、試算、編輯關鍵詞規則 |
+| `ilearn service install`、`uninstall`、`status [--json]` | 安裝、移除背景服務，或查看是否已安裝 |
 | `ilearn status [--json]` | 同步狀態、最近錯誤、首次同步進度、推送狀態 |
 | `ilearn mcp` | 以 stdio 啟動 MCP server，供支援 MCP 的 agent 使用 |
 
@@ -164,7 +175,7 @@ delivery:
 | 2 | 課程 | 代號、上課時間、教室；按 Enter 進入課程，查看待辦、公告、教材檔案、分數等 |
 | 3 | 提醒 | 系統提示、今天起會發出的截止提醒、今天起發布的公告 |
 | 4 | 課程設定 | 每科的通知規則與截止提醒 |
-| 5 | 系統設定 | Reload、立即同步、介面、推送方式、夜間時段、截止提醒、通知規則（含關鍵詞與試算）、帳號、Reset |
+| 5 | 系統設定 | Reload、立即同步、介面、推送方式、夜間時段、截止提醒、通知規則（含關鍵詞與試算）、帳號、背景服務、Reset |
 
 操作方式：方向鍵移動或切換左右欄，空白鍵剔選，Enter 確認或開啟，Esc 返回，q 離開。剔選後要再按 Enter 看過「將變更 N 項」並確認才會寫入。終端寬度不足 80 欄時改為單欄。
 

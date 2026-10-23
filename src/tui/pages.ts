@@ -319,7 +319,7 @@ function courseSettingsPage(s: TuiState, d: TuiData): Page {
 
 /* ---------- 5 系統設定 ---------- */
 
-export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', 'Reset'] as const;
+export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', '背景服務', 'Reset'] as const;
 
 function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
   const st = d.status;
@@ -383,6 +383,18 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         { text: '  重新登入', key: 'login', activate: { run: 'login' } },
         { text: '  登出（刪除 session 與已保存的密碼）', key: 'logout', activate: { run: 'logout' } },
       ];
+    case '背景服務': {
+      const sv = d.service;
+      return [
+        head('背景服務'),
+        dim('  由系統排程每 5 分鐘執行一次 ilearn run：到時間就同步，並檢查提醒與推送'),
+        { text: `  狀態：${sv ? sv.detail : '無法取得'}` },
+        { text: '' },
+        sv?.installed
+          ? { text: '  移除背景服務', key: 'svc', activate: { run: 'serviceUninstall' } }
+          : { text: '  安裝背景服務', key: 'svc', activate: { run: 'serviceInstall' } },
+      ];
+    }
     default:
       return [head('Reset'), dim('  全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留'), { text: '  按 Enter 重設', key: 'reset', activate: { confirm: [{ kind: 'reset' }] } }];
   }
