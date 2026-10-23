@@ -3,6 +3,24 @@
   "version": "0.1.0",
   "description": "Sync Tunghai University iLearn (TronClass) to your machine",
   "license": "MIT",
+  "author": "AnsonHui6040",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AnsonHui6040/ilearn.git"
+  },
+  "homepage": "https://github.com/AnsonHui6040/ilearn#readme",
+  "bugs": {
+    "url": "https://github.com/AnsonHui6040/ilearn/issues"
+  },
+  "keywords": [
+    "tunghai",
+    "thu",
+    "ilearn",
+    "tronclass",
+    "cli",
+    "mcp",
+    "ai-agent"
+  ],
   "type": "module",
   "bin": {
     "ilearn": "dist/cli/index.js"
