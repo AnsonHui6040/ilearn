@@ -39,7 +39,7 @@
 | 項目 | 狀態 |
 | --- | --- |
 | macOS 執行 `ilearn service install` 後 `ilearn service status` 為「已安裝（LaunchAgent）」，每 5 分鐘在 `logs/run.log` 留下紀錄 | PASS（使用者 2026-10-23 安裝，14:11 至 14:31 每 5 分鐘一筆） |
-| 背景服務在 session 過期後自動以已保存密碼重新登入 | 修正後 TBD（見下方） |
+| 背景服務在 session 過期後自動以已保存密碼重新登入 | PASS（PR #6 合併並更新後，下一輪 14:46:56 同步成功，`run.log` 不再出現錯誤） |
 | 重開機或睡眠喚醒後繼續執行 | TBD |
 | `ilearn ui` 安裝、移除背景服務 | TBD |
 | Linux systemd、crontab 與 Windows 工作排程器 | TBD（尚未在這些系統測試） |
