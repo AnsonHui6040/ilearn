@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getItem, getSyncState, listFiles, listItems, markReminderSent, reminderSent } from '../src/db/repo.js';
+import {
+  getItem, getSyncState, listFiles, listItems, markReminderSent, reminderSent, upsertCourse, upsertItem,
+} from '../src/db/repo.js';
 import { ApiError } from '../src/ilearn/api.js';
 import type { ApiSubmission } from '../src/ilearn/api.js';
 import { runReminderTick, runSync } from '../src/sync/sync.js';
@@ -430,5 +432,126 @@ describe('runReminderTick', () => {
     const before = of(env, 'exam.reminder').length;
     await runReminderTick(env.ctx);
     expect(of(env, 'exam.reminder')).toHaveLength(before);
+  });
+});
+
+describe('runReminderTick and old semesters', () => {
+  it('never reminds for an old-semester assignment with a future due date', async () => {
+    const env = makeEnv();
+    await runSync(env.ctx);
+    upsertCourse(env.db, {
+      id: '9', name: '舊課程', code: '1142_OLD001', semester: '114-2', start_date: '', end_date: '', raw: '{}',
+    });
+    upsertItem(env.db, {
+      id: 'assignment:900', kind: 'assignment', course_id: '9', title: '舊作業', body: null,
+      due_at: '2026-10-30T15:59:00.000Z', start_at: null, url: null, completion: 'pending', teammate_hint: false,
+      group: false, score: null, score_published: false, feedback: null, categories: [], matched_rules: [],
+      manual_categories: null, delivery: null, raw: '{}', first_seen_at: '2026-09-01T00:00:00Z',
+      updated_at: '2026-09-01T00:00:00Z',
+    });
+    env.clock.now = new Date('2026-10-30T13:00:00Z');
+    await runReminderTick(env.ctx);
+    const items = of(env, 'assignment.due_reminder').map((e) => e.item?.id);
+    expect(items).toContain('assignment:101');
+    expect(items).not.toContain('assignment:900');
+    expect(reminderSent(env.db, 'assignment:900', 'PT3H')).toBe(false);
+  });
+});
+
+describe('new semester initial fetch', () => {
+  /** 切到 115-2：兩門新課，課程 3 有一份未繳作業與一則公告。 */
+  function toNextSemester(env: TestEnv): void {
+    const d = env.fake.data;
+    d.semester = '115-2';
+    d.courses.push(
+      { id: 3, name: '作業系統', course_code: '1152_CS301', semester: { code: '115-2' } },
+      { id: 4, name: '行銷管理', course_code: '1152_BA401', semester: { code: '115-2' } },
+    );
+    d.activities[3] = [
+      { id: 201, type: 'homework', title: '新學期作業', end_time: '2027-03-10T15:59:00Z', submit_by_group: false, published: true },
+    ];
+    d.homework[3] = [
+      { id: 201, title: '新學期作業', end_time: '2027-03-10T15:59:00Z', submit_by_group: false, submitted: false,
+        submitted_status: null, is_closed: false, score: null, score_published: false },
+    ];
+    d.bulletins[3] = [{ id: 89000, title: '新學期公告', content: '<p>開學</p>', created_at: '2027-02-20T02:00:00Z' }];
+    d.activities[4] = [];
+    d.homework[4] = [];
+    d.bulletins[4] = [];
+  }
+
+  it('emits only record events plus a semester sync.initial_completed', async () => {
+    const env = await afterInitial();
+    const before = env.events().length;
+    toNextSemester(env);
+    const report = await runSync(env.ctx);
+    const added = env.events().slice(before);
+    expect(added.every((e) => e.delivery === 'record')).toBe(true);
+    expect(added.map((e) => e.type)).toEqual(['sync.initial_completed']);
+    expect(added[0]?.summary).toBe('新學期 115-2 首次同步完成，共 2 門課程');
+    expect(added[0]?.dedupe_key).toBe('sync.initial_completed:115-2');
+    expect(of(env, 'sync.initial_completed')).toHaveLength(2);
+    expect(report.initial).toBe(false);
+    expect(getItem(env.db, 'assignment:201', 'assignment')).not.toBeNull();
+    expect(getSyncState(env.db).initializing_semester).toBeNull();
+    expect(getSyncState(env.db).in_progress_courses).toEqual([]);
+    // 舊學期資料仍在
+    expect(getItem(env.db, 'assignment:101', 'assignment')).not.toBeNull();
+  });
+
+  it('stays silent when resumed after an interruption, then finishes once', async () => {
+    const env = await afterInitial();
+    const before = env.events().length;
+    toNextSemester(env);
+    env.fake.data.hooks['activities:4'] = () => {
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    };
+    await expect(runSync(env.ctx)).rejects.toThrow('aborted');
+    expect(env.events().slice(before)).toEqual([]);
+    let st = getSyncState(env.db);
+    expect(st.initializing_semester).toBe('115-2');
+    expect(st.in_progress_courses).toEqual(['3']);
+    expect(st.initial_completed).toBe(true);
+
+    // 續跑時課程 4 才有新公告；仍屬首次抓取，不能推送
+    delete env.fake.data.hooks['activities:4'];
+    env.fake.data.bulletins[4] = [{ id: 89001, title: '另一則公告', content: '<p>x</p>', created_at: '2027-02-21T02:00:00Z' }];
+    await runSync(env.ctx);
+    const added = env.events().slice(before);
+    expect(added.map((e) => e.type)).toEqual(['sync.initial_completed']);
+    expect(added[0]?.delivery).toBe('record');
+    expect(env.fake.count('activities:3')).toBe(1); // 已完成的課程不重抓
+    st = getSyncState(env.db);
+    expect(st.initializing_semester).toBeNull();
+    expect(st.in_progress_courses).toEqual([]);
+  });
+
+  it('keeps the initial fetch going while a new-semester course is incomplete', async () => {
+    const env = await afterInitial();
+    const before = env.events().length;
+    toNextSemester(env);
+    env.fake.data.fail['homework:3'] = new ApiError(500, '/api/courses/3/homework-activities');
+    await runSync(env.ctx);
+    expect(env.events().slice(before)).toEqual([]);
+    expect(getSyncState(env.db).initializing_semester).toBe('115-2');
+    delete env.fake.data.fail['homework:3'];
+    await runSync(env.ctx);
+    expect(env.events().slice(before).map((e) => e.type)).toEqual(['sync.initial_completed']);
+  });
+
+  it('a later sync in the same new semester pushes events as usual', async () => {
+    const env = await afterInitial();
+    toNextSemester(env);
+    await runSync(env.ctx);
+    env.clock.now = new Date(env.clock.now.getTime() + HOUR);
+    const before = env.events().length;
+    env.fake.data.bulletins[3]?.push({
+      id: 89002, title: '改至 M201 上課', content: '<p>下週起</p>', created_at: '2027-03-01T04:30:00Z',
+    });
+    await runSync(env.ctx);
+    const added = env.events().slice(before);
+    expect(added.map((e) => e.type)).toEqual(['announcement.new']);
+    expect(added[0]?.delivery).toBe('push');
+    expect(of(env, 'sync.initial_completed')).toHaveLength(2);
   });
 });

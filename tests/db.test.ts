@@ -137,6 +137,7 @@ describe('db', () => {
       next_sync_at: null,
       in_progress_courses: [],
       incomplete_courses: [],
+      initializing_semester: null,
     });
     setSyncState(db, { initial_completed: true, incomplete_courses: ['c1'] });
     setSyncState(db, { last_sync_at: '2026-10-22T00:00:00Z' });
@@ -144,6 +145,12 @@ describe('db', () => {
     expect(s.initial_completed).toBe(true);
     expect(s.incomplete_courses).toEqual(['c1']);
     expect(s.last_sync_at).toBe('2026-10-22T00:00:00Z');
+    expect(s.initializing_semester).toBeNull();
+    setSyncState(db, { initializing_semester: '115-2' });
+    expect(getSyncState(db).initializing_semester).toBe('115-2');
+    expect(getSyncState(db).initial_completed).toBe(true);
+    setSyncState(db, { initializing_semester: null });
+    expect(getSyncState(db).initializing_semester).toBeNull();
   });
 
   it('files', () => {
