@@ -2,6 +2,7 @@ import type { courseCommand } from '../cli/commands/query.js';
 import type { Rule } from '../rules/engine.js';
 import { displayName, type CourseRow, type TuiData } from './data.js';
 import { TWO_PANE_COLS, type Style } from './frame.js';
+import { AGENT_CHANGE_DAYS, AGENT_CHANGE_SHOWN, formatAgentChange } from '../agent/changes.js';
 import { toTaipeiIso } from '../time.js';
 import { changeKey, SUMMARY_LABEL, type Change, type Row, type TuiState, type View } from './state.js';
 import { fit, strWidth, wrap } from './text.js';
@@ -56,6 +57,9 @@ function homePage(s: TuiState, d: TuiData): Page {
   const rows: Row[] = [];
   if (d.update?.available) {
     rows.push(head(`有新版本 ${d.update.latest}（目前 ${d.update.current}），可在系統設定 > 系統更新 更新`), { text: '' });
+  }
+  if (d.agentChanges.length > 0) {
+    rows.push(head(`agent 最近 ${AGENT_CHANGE_DAYS} 日修改了 ${d.agentChanges.length} 項設定，詳情見 3 提醒`), { text: '' });
   }
   rows.push(head(`需要處理  未完成 ${d.tasks.tasks.length}`));
   const row = (t: TuiData['home']['overdue'][number], style?: Style): Row => {
@@ -266,6 +270,14 @@ function remindersPage(d: TuiData): Page {
   const rows: Row[] = [head('系統')];
   if (d.notices.length === 0) rows.push(dim('  沒有系統提醒'));
   rows.push(...d.notices.map((n, i): Row => ({ text: `  ${n}`, key: `notice:${i}`, style: 'red' })));
+  if (d.agentChanges.length > 0) {
+    rows.push(
+      { text: '' },
+      head(`agent 最近 ${AGENT_CHANGE_DAYS} 日修改的設定 ${d.agentChanges.length}`),
+      ...d.agentChanges.slice(0, AGENT_CHANGE_SHOWN).map((c, i): Row => ({ text: `  ${formatAgentChange(c)}`, key: `agentchg:${i}` })),
+    );
+    if (d.agentChanges.length > AGENT_CHANGE_SHOWN) rows.push(dim(`  只列出最新 ${AGENT_CHANGE_SHOWN} 項，完整紀錄在 data/agent-changes.jsonl`));
+  }
   rows.push({ text: '' }, head(`即將發出的截止提醒 ${d.reminders.length}`));
   if (d.reminders.length === 0) rows.push(dim('  今天之後沒有提醒'));
   rows.push(
@@ -347,7 +359,7 @@ function courseSettingsPage(s: TuiState, d: TuiData): Page {
 
 /* ---------- 5 系統設定 ---------- */
 
-export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '摘要', '帳號', '背景服務', '系統更新', 'Reset', '完全移除'] as const;
+export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '摘要', 'agent 權限', '帳號', '背景服務', '系統更新', 'Reset', '完全移除'] as const;
 
 function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
   const st = d.status;
@@ -405,16 +417,32 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
     }
     case '摘要': {
       const sm = d.config.summaries;
-      const tick: Change = { kind: 'agentWrite', enabled: !sm.agent_write };
       return [
         head('摘要'),
         dim('  agent 讀取待摘要的公告與教材，寫好後用 ilearn summaries write 或 MCP 寫回；本工具不會呼叫任何 AI'),
-        { text: `  ${box(willBe(s, sm.agent_write, tick))} 允許 agent 寫入摘要`, key: 'agent-write', tick, activate: { confirm: [tick] } },
         { text: '' },
         { text: `  每日上限：${sm.daily_limit} 則` },
         { text: `  今天已寫入：${d.summariesToday} 則` },
         { text: '' },
-        dim('  各科是否啟用，在「課程設定」分頁'),
+        dim('  各科是否啟用，在「課程設定」分頁；是否允許 agent 寫入，在「agent 權限」'),
+      ];
+    }
+    case 'agent 權限': {
+      const ap = d.config.agent_permissions;
+      const perm = (permission: 'summaries' | 'settings', label: string): Row => {
+        const tick: Change = { kind: 'agentPermission', permission, enabled: !ap[permission] };
+        return { text: `  ${box(willBe(s, ap[permission], tick))} ${label}`, key: `agent-perm:${permission}`, tick, activate: { confirm: [tick] } };
+      };
+      return [
+        head('agent 權限'),
+        dim('  預設都不允許；只有你能在這裡或 ilearn setup 改變，agent 不能自己開啟'),
+        { text: '' },
+        perm('summaries', '允許 agent 寫入摘要'),
+        perm('settings', '允許 agent 修改設定'),
+        { text: '' },
+        dim('  可修改的設定：夜間時段、截止提醒、通知規則與關鍵詞、每科設定、摘要開關與每日上限、資料夾檢視、更新頻率'),
+        dim('  帳號、密碼、推送方式、背景服務、更新與移除一律不開放'),
+        dim('  agent 每次修改都會記錄，並顯示在首頁與「提醒」分頁'),
       ];
     }
     case '帳號':

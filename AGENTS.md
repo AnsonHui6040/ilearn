@@ -2,6 +2,83 @@
 
 給 Codex、Claude、Hermes 等 AI agent 的使用說明。`ilearn` 把東海大學 iLearn 同步到使用者的電腦，agent 透過指令讀取。
 
+## 使用方法（先讀這段）
+
+照下面的步驟做即可；後面各節是欄位與格式的完整參考。有 MCP 工具時用對應的工具（見「MCP server」），步驟相同。
+
+### 五條基本規則
+
+1. 只用本文件列出的 `ilearn` 指令或 MCP 工具。不要修改資料根（預設 `~/.thu-ilearn`）底下的任何檔案，也不要讀 `data/` 裡的帳號與 session 檔案。
+2. 每個資料指令都加 `--json`，只解析標準輸出。欄位以本文件為準，不要猜。
+3. 會寫入的只有 `events ack`、`summaries write`、`config set`、`rules add`。後三個只在使用者允許時有效，而且使用者沒有要求就不要用。
+4. 指令失敗就停下來，把標準錯誤的訊息轉告使用者。不要換其他鍵名、改檔案或用別的方法繞過。
+5. 不確定使用者的意思，先問，不要猜。
+
+### 回答作業與截止日
+
+1. `ilearn tasks --json`。
+2. `initial_sync_in_progress` 為 `true`：告訴使用者資料還在提取中，不可以說「沒有作業」。
+3. `overdue` 為 `true` 的先講，其餘依 `due_at` 由近到遠。
+4. `not_started` 為 `true`：還沒開放繳交，不要催。`teammate_hint` 為 `true`：提醒使用者自己確認隊員是否已交。
+5. 時間一律用台北時間，例如「10/24（五）23:59」。
+
+### 定時檢查通知
+
+每 5 分鐘一次就夠，不要更頻繁。
+
+1. `ilearn events --deliverable --agent <你的名稱> --json`。空陣列就什麼都不做。
+2. 逐則處理：`force_push` 立刻通知，`push` 一般通知，`record` 不通知。同一個 `reload_id` 合併成一則。
+3. 全部處理完，`ilearn events ack <你的名稱> <最後一則的 event_id>`。
+4. 中途出錯就不要 ack，下次會再取得同一批。
+
+### 回答分數、找教材
+
+- 分數：使用者問了才查，`ilearn grades --course <課程 id> --json`。`grade.posted` 事件只說「有新分數」，不要主動讀出分數。
+- 教材：`ilearn files search <關鍵字> --json`，回傳的 `local_path` 是本機檔案，直接讀檔。`local_path` 為 `null` 時看 `status`：`skipped` 是老師關閉下載，`link` 是外部連結，兩者都把 `link` 或 iLearn 連結給使用者；`pending`、`failed` 是還沒下載好，請使用者稍後再問或執行 `ilearn sync`。
+- 課程 id：`ilearn courses --json`。
+
+### 寫摘要（只在使用者要摘要時）
+
+1. `ilearn summaries pending --json`。`agent_write` 為 `false` 就停止。
+2. 逐筆讀 `body`（公告）或 `path` 的檔案（教材），寫摘要，最多 2000 字。
+3. 寫回，`--hash` 用同一筆的 `source_hash`：
+
+   ```sh
+   printf '%s' "<摘要文字>" | ilearn summaries write <target_id> --hash <source_hash> --agent <你的名稱> --json
+   ```
+
+4. `remaining_today` 用完就停，明天再寫。
+
+### 修改設定（只在使用者明確要求時）
+
+1. `ilearn config get --json`。`agent_permissions.settings` 為 `false`：告訴使用者你沒有權限，請他自己在 `ilearn ui` 修改，或在「系統設定 > agent 權限」允許你修改。到此為止。
+2. 在下方「修改設定」的鍵清單找到唯一對應的鍵。找不到就告訴使用者這項你不能改，到此為止。
+3. 從 `config get` 取得舊值，告訴使用者「舊值 → 新值」。使用者同意，或原話已指定確切的值，才繼續。
+4. `ilearn config set <key> <value> --agent <你的名稱> --json`，一次只改一個鍵，回報回傳的 `old` 與 `new`。
+
+使用者的話對應到的鍵：
+
+| 使用者說 | 做法 |
+| --- | --- |
+| 「晚上 11 點到早上 7 點不要推送」 | `quiet_hours.start` 設 `23:00`，`quiet_hours.end` 設 `07:00` |
+| 「截止前 2 天也提醒我」 | 先取得 `reminders.offsets` 原值（例如 `P1D,PT3H`），設成 `P2D,P1D,PT3H` |
+| 「考試成績公布不用通知我」 | 在 `config get` 的 `rules` 找到對應規則代碼，設 `rules.<代碼>.action` 為 `record` |
+| 「資料結構的公告要摘要」 | 從 `config get` 或 `courses` 找課程 id，設 `summaries.courses.<課程 id>.announcements` 為 `true` |
+| 「公告提到停課就馬上通知我」 | 先看 `rules` 有沒有類似規則；有就改 `rules.<代碼>.keywords`，沒有才 `ilearn rules add --name 停課 --keywords 停課 --action force_push --agent <你的名稱> --json` |
+| 「幫我改推送的指令／webhook」「幫我登入」 | 不能做，請使用者自己在 `ilearn ui` 或終端操作 |
+
+### 出錯時
+
+| 情況 | 做法 |
+| --- | --- |
+| exit code 2 | 尚未設定或登入過期。請使用者自己執行 `ilearn login`（尚未設定時 `ilearn setup`），不要重試 |
+| 訊息提到「尚未允許」 | 停止，不要再試 |
+| 訊息提到 hash 不符或原文已變動 | 重新執行 `summaries pending`，用新的 `source_hash` |
+| 訊息提到每日上限 | 今天停止寫摘要 |
+| 訊息提到不能修改、不在清單或值無效 | 停止，把訊息轉告使用者 |
+| 其他 exit code 1 | 把標準錯誤的訊息轉告使用者，不要自己修改檔案修復 |
+| 找不到 `ilearn` 指令 | 告訴使用者 thu-ilearn 沒有安裝或不在 PATH |
+
 ## 使用原則
 
 - 所有資料指令都加 `--json`。標準輸出只會有一個 JSON 值，可直接解析。
@@ -27,6 +104,9 @@
 | `ilearn summaries pending --json` | `{ agent_write, remaining_today, pending[] }`。`pending[]` 欄位：`target_id`、`kind`（`announcement` 或 `material`）、`course`、`title`、`body`（公告內文）、`path`（教材的本機絕對路徑）、`source_hash` |
 | `ilearn summaries write <target_id> --hash <source_hash> [--agent <名稱>]` | 從標準輸入讀取摘要文字（最多 2000 字）並寫入；使用者沒有允許時 exit 1 |
 | `ilearn rules list --json` | 目前生效的規則（只讀） |
+| `ilearn config get [--json]` | 只讀：`{ agent_permissions, settings }`。`agent_permissions` 為 `{ summaries, settings }`；`settings` 只含你可以修改的項目與目前的值（夜間時段、截止提醒、規則清單、每科覆寫、摘要開關、資料夾檢視、更新頻率） |
+| `ilearn config set <key> <value> --agent <名稱> [--json]` | 修改一項設定，回傳 `{ key, old, new }`；使用者沒有允許修改設定、鍵不在下方清單或值無效時 exit 1 |
+| `ilearn rules add --name <名稱> --keywords <a,b> --action <等級> [--course <id,...>] --agent <名稱> [--json]` | 新增一條通知規則，代碼自動產生；權限與記錄同 `config set` |
 | `ilearn service status --json` | 背景服務是否已安裝：`{ installed, method, detail }` |
 
 ## MCP server
@@ -58,8 +138,11 @@
 | `summaries_pending` | `ilearn summaries pending --json` | 無 |
 | `summaries_write` | `ilearn summaries write` | `target_id`、`source_hash`、`text`，`agent` 可省略 |
 | `rules_list` | `ilearn rules list --json` | 無 |
+| `config_get` | `ilearn config get --json` | 無 |
+| `config_set` | `ilearn config set` | `key`、`value`、`agent` |
+| `rules_add` | `ilearn rules add` | `name`、`keywords`、`action`、`agent`，`courses` 可省略 |
 
-除了 `events_ack` 與 `summaries_write` 之外全部只讀；`summaries_write` 只寫摘要，且只在使用者允許時有效。錯誤以工具錯誤（`isError`）回傳中文訊息。MCP server 不提供同步、Reload、登入、標記「隊員已交」、修改規則或設定、讀取帳密的工具。
+除了 `events_ack`、`summaries_write`、`config_set`、`rules_add` 之外全部只讀。`summaries_write` 只寫摘要，`config_set` 與 `rules_add` 只能改下方清單內的設定，兩者都只在使用者允許時有效。錯誤以工具錯誤（`isError`）回傳中文訊息。MCP server 不提供同步、Reload、登入、標記「隊員已交」、修改帳號、密碼、推送方式或 agent 權限、讀取帳密的工具。
 
 ## 摘要
 
@@ -72,6 +155,33 @@
 5. `remaining_today` 是今天還能寫的則數，用完就停，明天再寫；`pending` 的數量已受此限制。
 
 寫入後，摘要會出現在 `ilearn course`、`ilearn announcements` 輸出的 `summary` 欄位（尚未有摘要時為 `null`）。
+
+## 修改設定
+
+使用者可以在 `ilearn setup` 第 8 步或 `ilearn ui` 的「系統設定 > agent 權限」允許你修改設定。先用 `ilearn config get --json`（MCP：`config_get`）看 `agent_permissions.settings`；為 `false` 就不要嘗試，除非使用者說想要你改，也不要請他為你開啟。
+
+`config set <key> <value> --agent <你的名稱>`（MCP：`config_set`）可以修改的鍵：
+
+| 鍵 | 值 |
+| --- | --- |
+| `quiet_hours.start`、`quiet_hours.end` | `HH:mm`，例如 `23:00` |
+| `reminders.offsets` | 逗號分隔的 ISO 8601 時間長度，至少一個，例如 `P1D,PT3H` |
+| `force_push_offsets` | 同上，可以是空字串（不強制推送） |
+| `rules.<規則代碼>.enabled` | `true` 或 `false` |
+| `rules.<規則代碼>.action` | `record`、`push` 或 `force_push` |
+| `rules.<規則代碼>.keywords` | 逗號分隔的關鍵詞，取代該規則原本的「任一關鍵詞」 |
+| `course_overrides.<課程 id>.rules.<規則代碼>.enabled`、`.action` | 同上；值 `default` 表示改回沿用系統 |
+| `course_overrides.<課程 id>.reminders` | 同 `reminders.offsets`；值 `default` 表示改回沿用系統 |
+| `summaries.courses.<課程 id>.materials`、`.announcements` | `true` 或 `false` |
+| `summaries.daily_limit` | 0 到 200 的整數 |
+| `interfaces.folder` | `true` 或 `false` |
+| `updates.check` | `daily`、`weekly` 或 `off` |
+
+新增規則用 `ilearn rules add`（MCP：`rules_add`）：`--keywords` 以逗號分隔，`--action` 為 `record`、`push` 或 `force_push`，`--course` 省略時適用全部課程。規則代碼 `custom_1`、`custom_2` 由系統產生，其餘欄位使用預設值（比對標題與內文）。
+
+其他一律拒絕，包括帳號、密碼、登入、`password_saved`、`environment`、`delivery.*`（hook 指令與 webhook 網址）、`period_times`、背景服務、更新、解除安裝、Reset，以及 `agent_permissions` 本身。
+
+每一次修改都會寫入 `<資料根>/data/agent-changes.jsonl`（時間、你的 agent 名稱、鍵、舊值、新值），並顯示在 `ilearn ui` 首頁最上方與「3 提醒」，也列在 `總覽.md` 的系統提示。你的名稱要用一貫的名稱，使用者才看得出是誰改的。
 
 `initial_sync_in_progress` 為 `true` 時，首次同步還沒完成，清單可能不完整。這時不要告訴使用者「沒有作業」，要說明資料還在提取中。`incomplete_courses` 不為空時，表示那幾科的資料可能不完整。
 
@@ -136,12 +246,13 @@
 - 讀取所有同步資料，包括分數與評語，用來回答使用者的提問。
 - `ilearn events ack`（MCP 工具 `events_ack`）。
 - 寫入摘要：只能透過 `ilearn summaries write`（MCP 工具 `summaries_write`），且只在使用者已允許時。未允許時指令以 exit 1 與中文訊息拒絕；除非使用者說想要摘要，不要請他為你更改這項設定。
+- 修改設定：只能透過 `ilearn config set` 與 `ilearn rules add`（MCP 工具 `config_set`、`rules_add`），只限上方「修改設定」列出的鍵，且只在使用者已允許時。這些修改會被記錄並顯示給使用者，所以除非使用者要求你改，請先說明要改什麼並問過再改。
 - 查看目前規則與狀態。
 
 不可以：
 
 - 修改完成狀態或標記「隊員已交」（`mark-teammate` 在非互動終端會被拒絕，請提醒使用者自己操作）。
-- 修改規則（`rules edit`）、設定檔（包括 hook 指令及 webhook 網址）或 `rules.yaml`。
+- 直接編輯 `config.yaml`、`rules.yaml`，或用 `rules edit` 修改規則（`rules edit` 在非互動終端會被拒絕）。設定只能透過 `config set`、`rules add` 修改，不可以改 hook 指令、webhook 網址、帳號、推送方式或 agent 權限，也不要請使用者為你開啟權限。
 - 讀取帳號、密碼、cookie 或 session 檔案。
 - 觸發登入（`ilearn login`、`ilearn setup`）。登入過期時請使用者自己處理。
 - 安裝或移除背景服務（`ilearn service install`、`uninstall` 在非互動終端會被拒絕）。

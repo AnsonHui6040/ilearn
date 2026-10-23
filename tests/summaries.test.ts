@@ -44,7 +44,7 @@ function file(ctx: CliContext, id: string, courseId: string, o: { hash?: string 
 
 function enable(ctx: CliContext, courseId: string, v: { materials?: boolean; announcements?: boolean }, allow = true): void {
   ctx.config.summaries.courses[courseId] = { materials: v.materials ?? false, announcements: v.announcements ?? false };
-  ctx.config.summaries.agent_write = allow;
+  ctx.config.agent_permissions.summaries = allow;
   saveConfig(ctx.config, ctx.root);
 }
 
@@ -248,7 +248,7 @@ describe('MCP tools', () => {
     expect(denied.content[0]?.text).toContain('尚未允許');
 
     const ctx2 = mk(root);
-    ctx2.config.summaries.agent_write = true;
+    ctx2.config.agent_permissions.summaries = true;
     saveConfig(ctx2.config, root);
     ctx2.db.close();
     const ok = await call(c, 'summaries_write', { target_id: 'announcement:1', source_hash: hash, text: '摘要', agent: 'codex' });
@@ -261,13 +261,14 @@ describe('MCP tools', () => {
 
 describe('setup wizard', () => {
   const quiet = () => vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-  function prompts(checks: string[][], confirmAnswer: boolean) {
-    const confirms: { message: string; default: boolean }[] = [];
+  type Box = { message: string; choices: { name: string; value: string; checked?: boolean }[] };
+  function prompts(checks: string[][]) {
+    const boxes: Box[] = [];
     return {
-      confirms,
+      boxes,
       p: {
-        checkbox: (() => Promise.resolve(checks.shift() ?? [])) as never,
-        confirm: ((o: { message: string; default: boolean }) => (confirms.push(o), Promise.resolve(confirmAnswer))) as never,
+        checkbox: ((o: Box) => (boxes.push(o), Promise.resolve(checks.shift() ?? []))) as never,
+        confirm: (() => Promise.reject(new Error('unexpected confirm'))) as never,
       } as never,
     };
   }
@@ -277,34 +278,49 @@ describe('setup wizard', () => {
     out.mockRestore();
   };
 
-  it('asks about agent writes when a course is enabled, defaulting to yes the first time', async () => {
+  it('ends step 8 with one agent permission checkbox, both unchecked for a new config', async () => {
     const ctx = seeded();
-    const f = prompts([['1'], []], true);
+    const f = prompts([['1'], [], ['summaries']]);
     await run(ctx, f.p);
-    expect(f.confirms).toHaveLength(1);
-    expect(f.confirms[0]?.message).toBe('允許 agent 寫入摘要嗎？（agent 透過 ilearn summaries write 或 MCP 寫回，本工具不會呼叫任何 AI）');
-    expect(f.confirms[0]?.default).toBe(true);
-    expect(ctx.config.summaries.agent_write).toBe(true);
-    expect(formatConfirmation(ctx)).toContain('8 老師公告摘要：沒有選擇任何課程；agent 寫入摘要：允許');
+    expect(f.boxes).toHaveLength(3);
+    const perm = f.boxes[2];
+    expect(perm?.message).toBe('允許 agent：');
+    expect(perm?.choices.map((c) => [c.name, c.value, c.checked])).toEqual([
+      ['寫入摘要（透過 ilearn summaries write 或 MCP）', 'summaries', false],
+      ['修改設定（通知、提醒、規則與關鍵詞、每科設定、摘要開關、資料夾檢視、更新頻率）', 'settings', false],
+    ]);
+    expect(ctx.config.agent_permissions).toEqual({ summaries: true, settings: false });
+    expect(formatConfirmation(ctx)).toContain('8 老師公告摘要：沒有選擇任何課程；agent 權限：寫入摘要');
   });
 
-  it('does not ask and stores false when no course is enabled', async () => {
+  it('asks even when no course has summaries and stores both choices', async () => {
     const ctx = seeded();
-    ctx.config.summaries.agent_write = true;
-    const f = prompts([[], []], true);
+    const f = prompts([[], [], ['summaries', 'settings']]);
     await run(ctx, f.p);
-    expect(f.confirms).toHaveLength(0);
-    expect(ctx.config.summaries.agent_write).toBe(false);
-    expect(formatConfirmation(ctx)).toContain('agent 寫入摘要：不允許');
+    expect(f.boxes).toHaveLength(3);
+    expect(ctx.config.agent_permissions).toEqual({ summaries: true, settings: true });
+    expect(formatConfirmation(ctx)).toContain('agent 權限：寫入摘要、修改設定');
   });
 
-  it('keeps a previously saved answer as the default', async () => {
-    const ctx = seeded();
-    enable(ctx, '1', { announcements: true }, false);
-    const f = prompts([['1'], ['1']], false);
+  it('asks even when there are no courses at all', async () => {
+    const ctx = mk();
+    const f = prompts([['settings']]);
     await run(ctx, f.p);
-    expect(f.confirms[0]?.default).toBe(false);
-    expect(ctx.config.summaries.agent_write).toBe(false);
+    expect(f.boxes).toHaveLength(1);
+    expect(f.boxes[0]?.message).toBe('允許 agent：');
+    expect(ctx.config.agent_permissions).toEqual({ summaries: false, settings: true });
+    expect(formatConfirmation(ctx)).toContain('agent 權限：修改設定');
+  });
+
+  it('defaults to the saved values and shows 都不允許 when nothing is ticked', async () => {
+    const ctx = seeded();
+    ctx.config.agent_permissions = { summaries: false, settings: true };
+    saveConfig(ctx.config, ctx.root);
+    const f = prompts([[], [], []]);
+    await run(ctx, f.p);
+    expect(f.boxes[2]?.choices.map((c) => c.checked)).toEqual([false, true]);
+    expect(ctx.config.agent_permissions).toEqual({ summaries: false, settings: false });
+    expect(formatConfirmation(ctx)).toContain('agent 權限：都不允許');
   });
 });
 
@@ -336,20 +352,38 @@ describe('TUI', () => {
     expect(ctx.config.summaries.courses['1']).toBeUndefined();
   });
 
-  it('puts the summary item after the notification rules and toggles agent_write', () => {
+  it('puts the summary item after the notification rules, without the agent toggle', () => {
     const ctx = seeded();
     const idx = SYSTEM_ITEMS.indexOf('摘要');
     expect(idx).toBe(SYSTEM_ITEMS.indexOf('通知規則') + 1);
+    expect(SYSTEM_ITEMS.indexOf('agent 權限')).toBe(idx + 1);
+    expect(SYSTEM_ITEMS.indexOf('帳號')).toBe(idx + 2);
+    const right: Row[] = buildPage(state({ tab: 5, cursor: [idx + 1, 0] }), loadTuiData(ctx), 100, sources(ctx)).panes[1] ?? [];
+    const text = right.map((r) => r.text).join('\n');
+    expect(text).not.toContain('] 允許 agent');
+    expect(right.some((r) => r.tick !== undefined)).toBe(false);
+    expect(text).toContain('每日上限：20 則');
+    expect(text).toContain('今天已寫入：0 則');
+  });
+
+  it('toggles the two agent permissions through the tick and confirm flow', () => {
+    const ctx = seeded();
+    const idx = SYSTEM_ITEMS.indexOf('agent 權限');
     const right: Row[] = buildPage(state({ tab: 5, cursor: [idx + 1, 0] }), loadTuiData(ctx), 100, sources(ctx)).panes[1] ?? [];
     const text = right.map((r) => r.text).join('\n');
     expect(text).toContain('[ ] 允許 agent 寫入摘要');
-    expect(text).toContain('每日上限：20 則');
-    expect(text).toContain('今天已寫入：0 則');
-    const tick = right.find((r) => r.key === 'agent-write')?.tick;
-    expect(tick).toEqual({ kind: 'agentWrite', enabled: true });
-    expect(previewChanges(ctx, [tick!]).at(1)).toBe('允許 agent 寫入摘要：允許');
-    applyChanges(ctx, [tick!]);
-    expect(ctx.config.summaries.agent_write).toBe(true);
+    expect(text).toContain('[ ] 允許 agent 修改設定');
+    const a = right.find((r) => r.key === 'agent-perm:summaries')?.tick;
+    const b = right.find((r) => r.key === 'agent-perm:settings')?.tick;
+    expect(a).toEqual({ kind: 'agentPermission', permission: 'summaries', enabled: true });
+    expect(b).toEqual({ kind: 'agentPermission', permission: 'settings', enabled: true });
+    expect(previewChanges(ctx, [a!, b!]).slice(1)).toEqual(['允許 agent 寫入摘要：允許', '允許 agent 修改設定：允許']);
+    applyChanges(ctx, [b!]);
+    expect(ctx.config.agent_permissions).toEqual({ summaries: false, settings: true });
+    applyChanges(ctx, [a!, { kind: 'agentPermission', permission: 'settings', enabled: false }]);
+    expect(ctx.config.agent_permissions).toEqual({ summaries: true, settings: false });
+    const again: Row[] = buildPage(state({ tab: 5, cursor: [idx + 1, 0] }), loadTuiData(ctx), 100, sources(ctx)).panes[1] ?? [];
+    expect(again.map((r) => r.text).join('\n')).toContain('[x] 允許 agent 寫入摘要');
   });
 
   it('shows a summary under announcements and material files in the course page', () => {

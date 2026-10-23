@@ -14,6 +14,8 @@ import type { Delivery } from '../types.js';
 import { displayName } from './data.js';
 import { SUMMARY_LABEL, type Change } from './state.js';
 
+export const PERMISSION_LABEL = { summaries: '寫入摘要', settings: '修改設定' } as const;
+
 export const OFFSET_CHOICES: string[] = ['P3D', 'P2D', 'P1D', 'PT12H', 'PT6H', 'PT3H', 'PT1H'];
 
 type CourseOverrides = Config['course_overrides'];
@@ -60,8 +62,8 @@ export function previewChanges(ctx: CliContext, changes: Change[]): string[] {
       case 'courseSummary':
         lines.push(`${courseName(ctx, c.courseId)}「${SUMMARY_LABEL[c.summary]}」：${onOff(c.enabled)}`);
         break;
-      case 'agentWrite':
-        lines.push(`允許 agent 寫入摘要：${c.enabled ? '允許' : '不允許'}`);
+      case 'agentPermission':
+        lines.push(`允許 agent ${PERMISSION_LABEL[c.permission]}：${c.enabled ? '允許' : '不允許'}`);
         break;
       case 'reset':
         lines.push('全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留');
@@ -79,7 +81,7 @@ function writeRules(ctx: CliContext, rules: Rule[]): void {
 }
 
 /** 刪除空的 rules 與課程物件。 */
-function prune(overrides: CourseOverrides, courseId: string): void {
+export function prune(overrides: CourseOverrides, courseId: string): void {
   const course = overrides[courseId];
   if (course === undefined) return;
   if (course.rules !== undefined) {
@@ -163,8 +165,8 @@ export function applyChanges(ctx: CliContext, changes: Change[]): { applied: num
         applied++;
         break;
       }
-      case 'agentWrite':
-        cfg.summaries.agent_write = c.enabled;
+      case 'agentPermission':
+        cfg.agent_permissions[c.permission] = c.enabled;
         cfgDirty = true;
         applied++;
         break;

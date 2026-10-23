@@ -7,6 +7,14 @@ import { dataRoot, writeSecureFile } from './paths.js';
 
 export type UpdateFrequency = 'daily' | 'weekly' | 'off';
 
+/** 使用者允許 agent 做的事；預設都不允許，只有使用者本人能改。 */
+export interface AgentPermissions {
+  /** 寫入摘要 */
+  summaries: boolean;
+  /** 修改一部分設定（通知、提醒、規則、每科設定等） */
+  settings: boolean;
+}
+
 export interface Config {
   environment: 'desktop' | 'vps';
   interfaces: { terminal: boolean; folder: boolean; web: boolean; desktop: boolean };
@@ -16,8 +24,6 @@ export interface Config {
   force_push_offsets: string[];
   summaries: {
     daily_limit: number;
-    /** 是否允許 agent 把摘要寫回；預設不允許 */
-    agent_write: boolean;
     courses: Record<string, { materials: boolean; announcements: boolean }>;
   };
   course_overrides: Record<
@@ -26,6 +32,7 @@ export interface Config {
   >;
   period_times: Record<string, { start: string; end: string }>;
   password_saved: boolean;
+  agent_permissions: AgentPermissions;
   /** 自動檢查新版本的頻率 */
   updates: { check: UpdateFrequency };
 }
@@ -40,10 +47,11 @@ export const DEFAULT_CONFIG: Config = {
   quiet_hours: { start: '00:00', end: '07:00' },
   reminders: { offsets: ['P1D', 'PT3H'] },
   force_push_offsets: ['PT3H'],
-  summaries: { daily_limit: 20, agent_write: false, courses: {} },
+  summaries: { daily_limit: 20, courses: {} },
   course_overrides: {},
   period_times: structuredClone(THU_PERIOD_TIMES),
   password_saved: false,
+  agent_permissions: { summaries: false, settings: false },
   updates: { check: 'daily' },
 };
 
@@ -69,7 +77,24 @@ export function loadConfig(root: string = dataRoot()): Config {
   const file = join(root, 'config.yaml');
   if (!existsSync(file)) return structuredClone(DEFAULT_CONFIG);
   const parsed: unknown = parse(readFileSync(file, 'utf8'));
-  return merge(DEFAULT_CONFIG, parsed);
+  const legacy = takeLegacyAgentWrite(parsed);
+  const cfg = merge(DEFAULT_CONFIG, parsed);
+  // 未發布版本的 summaries.agent_write: true 只轉成新的權限一次，之後沒有任何程式讀它
+  if (legacy && !hasOwn(parsed, 'agent_permissions', 'summaries')) cfg.agent_permissions.summaries = true;
+  return cfg;
+}
+
+function hasOwn(root: unknown, group: string, key: string): boolean {
+  if (!isPlainObject(root) || !isPlainObject(root[group])) return false;
+  return key in root[group];
+}
+
+/** 取出並移除舊的 summaries.agent_write，回傳它是否為 true。 */
+function takeLegacyAgentWrite(parsed: unknown): boolean {
+  if (!isPlainObject(parsed) || !isPlainObject(parsed.summaries)) return false;
+  const was = parsed.summaries.agent_write === true;
+  delete parsed.summaries.agent_write;
+  return was;
 }
 
 export function saveConfig(cfg: Config, root: string = dataRoot()): void {

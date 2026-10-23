@@ -89,7 +89,7 @@ export function pendingSummaries(ctx: CliContext): PendingSummaries {
   const remaining = remainingToday(ctx);
   const have = new Map(listSummaries(ctx.db).map((s) => [s.target_id, s.source_hash]));
   const pending = summaryTargets(ctx).filter((t) => have.get(t.target_id) !== t.source_hash);
-  return { agent_write: ctx.config.summaries.agent_write, remaining_today: remaining, pending: pending.slice(0, remaining) };
+  return { agent_write: ctx.config.agent_permissions.summaries, remaining_today: remaining, pending: pending.slice(0, remaining) };
 }
 
 /** 去掉控制字元（保留換行）後修剪，再截到字數上限。 */
@@ -104,8 +104,8 @@ export function writeSummary(
   ctx: CliContext,
   o: { target_id: string; source_hash: string; text: string; agent?: string | undefined },
 ): SummaryWritten {
-  if (!ctx.config.summaries.agent_write) {
-    throw new CliExit(1, '使用者尚未允許 agent 寫入摘要，可在 ilearn setup 第 8 步或 ilearn ui 的「系統設定 > 摘要」開啟');
+  if (!ctx.config.agent_permissions.summaries) {
+    throw new CliExit(1, '使用者尚未允許 agent 寫入摘要，可在 ilearn setup 第 8 步或 ilearn ui 的「系統設定 > agent 權限」開啟');
   }
   if (o.agent !== undefined) {
     try {

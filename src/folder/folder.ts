@@ -2,6 +2,7 @@ import { readdirSync, rmdirSync, rmSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { courseCommand } from '../cli/commands/query.js';
 import type { CliContext } from '../cli/context.js';
+import { AGENT_CHANGE_DAYS, AGENT_CHANGE_SHOWN, formatChangeValue } from '../agent/changes.js';
 import { writeSecureFile } from '../config/paths.js';
 import { sanitizeName } from '../sync/files.js';
 import { toTaipeiIso } from '../time.js';
@@ -100,7 +101,11 @@ function overview(ctx: CliContext, d: TuiData, details: Map<string, Detail>): st
       }),
     ),
   );
-  lines.push(...section('系統提示', d.notices.map((n) => `- ${oneLine(n)}`)));
+  const changes = d.agentChanges
+    .slice(0, AGENT_CHANGE_SHOWN)
+    .map((c) => `- ${stamp(c.at)} ${c.agent} 修改 ${c.key}：${oneLine(formatChangeValue(c.old))} → ${oneLine(formatChangeValue(c.new))}`);
+  const agentLines = changes.length ? [`- agent 最近 ${AGENT_CHANGE_DAYS} 日修改了 ${d.agentChanges.length} 項設定：`, ...changes.map((l) => `  ${l}`)] : [];
+  lines.push(...section('系統提示', [...d.notices.map((n) => `- ${oneLine(n)}`), ...agentLines]));
   return page('iLearn 總覽', lines);
 }
 

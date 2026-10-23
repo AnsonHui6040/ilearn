@@ -10,7 +10,7 @@ export type Change =
   | { kind: 'rule'; ruleId: string; enabled: boolean }
   | { kind: 'courseRule'; courseId: string; ruleId: string; enabled: boolean }
   | { kind: 'courseSummary'; courseId: string; summary: 'materials' | 'announcements'; enabled: boolean }
-  | { kind: 'agentWrite'; enabled: boolean }
+  | { kind: 'agentPermission'; permission: 'summaries' | 'settings'; enabled: boolean }
   | { kind: 'reset' };
 
 export const SUMMARY_LABEL = { materials: '教材檔案摘要', announcements: '老師公告摘要' } as const;
@@ -89,8 +89,8 @@ export function changeKey(c: Change): string {
       return `courseRule:${c.courseId}:${c.ruleId}`;
     case 'courseSummary':
       return `courseSummary:${c.courseId}:${c.summary}`;
-    case 'agentWrite':
-      return 'agentWrite';
+    case 'agentPermission':
+      return `agentPermission:${c.permission}`;
     case 'reset':
       return 'reset';
   }
