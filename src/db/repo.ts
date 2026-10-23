@@ -54,6 +54,8 @@ export interface SyncState {
   next_sync_at: string | null;
   in_progress_courses: string[];
   incomplete_courses: string[];
+  /** 新學期首次同步尚未完成時的學期代碼，否則為 null */
+  initializing_semester: string | null;
 }
 
 type Row = Record<string, SQLInputValue>;
@@ -218,6 +220,7 @@ export function getSyncState(db: DatabaseSync): SyncState {
     next_sync_at: r.next_sync_at as string | null,
     in_progress_courses: JSON.parse(r.in_progress_courses as string) as string[],
     incomplete_courses: JSON.parse(r.incomplete_courses as string) as string[],
+    initializing_semester: (r.initializing_semester as string | null) ?? null,
   };
 }
 
@@ -225,10 +228,10 @@ export function setSyncState(db: DatabaseSync, patch: Partial<SyncState>): void 
   const s = { ...getSyncState(db), ...patch };
   db.prepare(
     `UPDATE sync_state SET initial_completed = ?, last_sync_at = ?, next_sync_at = ?,
-       in_progress_courses = ?, incomplete_courses = ? WHERE id = 1`,
+       in_progress_courses = ?, incomplete_courses = ?, initializing_semester = ? WHERE id = 1`,
   ).run(
     s.initial_completed ? 1 : 0, s.last_sync_at, s.next_sync_at,
-    JSON.stringify(s.in_progress_courses), JSON.stringify(s.incomplete_courses),
+    JSON.stringify(s.in_progress_courses), JSON.stringify(s.incomplete_courses), s.initializing_semester,
   );
 }
 

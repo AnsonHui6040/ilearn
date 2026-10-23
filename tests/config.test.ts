@@ -45,7 +45,11 @@ describe('config', () => {
     const cfg = loadConfig(dir);
     expect(cfg.quiet_hours).toEqual({ start: '01:00', end: '07:00' });
     expect(cfg.reminders.offsets).toEqual(['P1D', 'PT3H']);
-    expect(cfg.files.download_disallowed).toBe('skip');
+  });
+
+  it('loads a stale files.download_disallowed key without error', () => {
+    writeFileSync(join(dir, 'config.yaml'), 'files:\n  download_disallowed: download\n');
+    expect(() => loadConfig(dir)).not.toThrow();
   });
 
   it('ILEARN_HOME overrides dataRoot', () => {

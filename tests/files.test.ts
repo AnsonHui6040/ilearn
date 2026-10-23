@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from 'nod
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listFiles, upsertCourse, upsertItem, upsertFile, type StoredFile, type StoredItem } from '../src/db/repo.js';
+import type { Config } from '../src/config/config.js';
 import type { ItemKind } from '../src/types.js';
 import { downloadPending, registerUploads, sanitizeName } from '../src/sync/files.js';
 import { makeEnv, type TestEnv } from './helpers/fakeApi.js';
@@ -116,16 +117,34 @@ describe('downloadPending', () => {
     expect(env.fake.count('downloadUpload')).toBe(0);
   });
 
-  it('downloads allow_download=false files when config says download', async () => {
-    const env = makeEnv({ config: { files: { download_disallowed: 'download' } } });
+  it('records allow_download=false files as skipped and never requests them', async () => {
+    const env = makeEnv();
     seed(env, 'material:102', 'material');
     env.fake.data.blobs[7] = 'secret';
     registerUploads(env.ctx, 'material:102', '1', [
       { id: 7, name: '禁止.pdf', size: 6, allow_download: false, link: null },
     ]);
-    expect(listFiles(env.db, {})[0]?.status).toBe('pending');
+    const f = listFiles(env.db, {})[0];
+    expect(f?.status).toBe('skipped');
+    expect(f?.allow_download).toBe(false);
     await downloadPending(env.ctx);
-    expect(listFiles(env.db, {})[0]?.status).toBe('done');
+    expect(env.fake.count('downloadUpload')).toBe(0);
+    expect(listFiles(env.db, {})[0]?.status).toBe('skipped');
+  });
+
+  it('ignores a stale download_disallowed: download in config', async () => {
+    const stale = { files: { download_disallowed: 'download' } } as unknown as Partial<Config>;
+    const env = makeEnv({ config: stale });
+    seed(env, 'material:102', 'material');
+    env.fake.data.blobs[7] = 'secret';
+    registerUploads(env.ctx, 'material:102', '1', [
+      { id: 7, name: '禁止.pdf', size: 6, allow_download: false, link: null },
+    ]);
+    // 舊版留下、仍排在佇列的禁止下載檔案也不能被請求
+    upsertFile(env.db, fileRow({ upload_id: '8', name: '舊的.pdf', allow_download: false }));
+    await downloadPending(env.ctx);
+    expect(env.fake.count('downloadUpload')).toBe(0);
+    expect(listFiles(env.db, {}).map((x) => x.status)).toEqual(['skipped', 'skipped']);
   });
 
   it('records external links without downloading', async () => {

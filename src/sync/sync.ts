@@ -513,6 +513,11 @@ async function syncCourseScore(run: Run, f: Flag, course: CourseRef): Promise<vo
 
 /* ---------- 同步主流程 ---------- */
 
+/** 資料庫中最新的學期代碼；沒有任何課程時為 null。 */
+function latestSemester(db: DatabaseSync): string | null {
+  return (db.prepare('SELECT MAX(semester) AS s FROM courses').get() as { s: string | null }).s;
+}
+
 async function syncCourse(run: Run, apiCourse: ApiCourse, course: CourseRef): Promise<boolean> {
   const f: Flag = { incomplete: false };
   const detail = await attempt(f, () => run.ctx.api.course(apiCourse.id));
@@ -541,11 +546,27 @@ export async function runSync(ctx: SyncContext): Promise<SyncReport> {
   const now = ctx.now();
   const state = getSyncState(ctx.db);
   const initial = !state.initial_completed;
-  const run: Run = { ctx, initial, now, nowIso: now.toISOString(), emitted: 0 };
 
   const semester = await ctx.api.activeSemesterCode();
+  // 新學期首次同步：已完成首次同步、資料庫已有課程，而且目前學期比資料庫中最新的學期還新。
+  // 進行中的學期代碼存在 sync_state，中斷後再同步仍視為首次抓取，直到該學期所有課程完成。
+  const resuming = !initial && state.initializing_semester === semester;
+  let newSemester = resuming;
+  if (!initial && !resuming) {
+    const latest = latestSemester(ctx.db);
+    if (latest !== null && semester > latest) {
+      newSemester = true;
+      setSyncState(ctx.db, { initializing_semester: semester, in_progress_courses: [] });
+    } else if (state.initializing_semester !== null) {
+      // 學期代碼已不是當初進行中的那一個，放棄舊的標記
+      setSyncState(ctx.db, { initializing_semester: null, in_progress_courses: [] });
+    }
+  }
+  const bootstrap = initial || newSemester;
+  const run: Run = { ctx, initial: bootstrap, now, nowIso: now.toISOString(), emitted: 0 };
+
   const courses = (await ctx.api.myCourses()).filter((c) => c.semester.code === semester);
-  const finished = new Set(initial ? state.in_progress_courses : []);
+  const finished = new Set(initial || resuming ? state.in_progress_courses : []);
   const incompleteIds: string[] = [];
   const incompleteNames: string[] = [];
   const progress = (done: number): void =>
@@ -568,14 +589,14 @@ export async function runSync(ctx: SyncContext): Promise<SyncReport> {
     if (incomplete) {
       incompleteIds.push(id);
       incompleteNames.push(c.name);
-    } else if (initial) {
+    } else if (bootstrap) {
       finished.add(id);
       setSyncState(ctx.db, { in_progress_courses: [...finished] });
     }
     progress(++done);
   }
 
-  if (!initial) {
+  if (!bootstrap) {
     for (let i = 0; i < incompleteIds.length; i++) {
       const course: CourseRef = { id: incompleteIds[i] as string, name: incompleteNames[i] as string, semester };
       emit(run, newEvent(run, 'sync.incomplete', course, null, {
@@ -586,12 +607,14 @@ export async function runSync(ctx: SyncContext): Promise<SyncReport> {
     }
   }
 
-  if (initial && incompleteIds.length === 0) {
+  if (bootstrap && incompleteIds.length === 0) {
     run.initial = false;
     emit(run, newEvent(run, 'sync.initial_completed', null, null, {
-      delivery: 'record', summary: `首次同步完成，共 ${courses.length} 門課程`, dedupe: 'sync.initial_completed',
+      delivery: 'record',
+      summary: initial ? `首次同步完成，共 ${courses.length} 門課程` : `新學期 ${semester} 首次同步完成，共 ${courses.length} 門課程`,
+      dedupe: initial ? 'sync.initial_completed' : `sync.initial_completed:${semester}`,
     }));
-    setSyncState(ctx.db, { initial_completed: true, in_progress_courses: [] });
+    setSyncState(ctx.db, { initial_completed: true, in_progress_courses: [], initializing_semester: null });
   }
   setSyncState(ctx.db, { incomplete_courses: incompleteIds, last_sync_at: now.toISOString() });
   if (run.emitted > 0) ctx.outbox.renderMarkdown();
@@ -606,7 +629,13 @@ export async function runReminderTick(ctx: Omit<SyncContext, 'api' | 'fetchText'
   const now = ctx.now();
   if (!getSyncState(ctx.db).initial_completed) return 0;
 
-  const items = [...listItems(ctx.db, { kind: 'assignment' }), ...listItems(ctx.db, { kind: 'exam' })];
+  // 只提醒目前學期；舊學期的項目永遠不產生提醒
+  const semester = latestSemester(ctx.db);
+  if (semester === null) return 0;
+  const items = [
+    ...listItems(ctx.db, { kind: 'assignment', semester }),
+    ...listItems(ctx.db, { kind: 'exam', semester }),
+  ];
   const byId = new Map(items.map((i) => [i.id, i]));
   const targets: ReminderTarget[] = [];
   for (const it of items) {

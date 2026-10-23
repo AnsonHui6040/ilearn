@@ -79,6 +79,8 @@ const MIGRATIONS: readonly string[] = [
   );
   INSERT INTO sync_state (id) VALUES (1);
   `,
+  // 新學期首次同步進行中的學期代碼；NULL 表示沒有
+  `ALTER TABLE sync_state ADD COLUMN initializing_semester TEXT;`,
 ];
 
 export const SCHEMA_VERSION: number = MIGRATIONS.length;

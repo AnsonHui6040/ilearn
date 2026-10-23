@@ -9,7 +9,7 @@ import { listFiles, upsertFile, type StoredFile } from '../db/repo.js';
 import type { ApiUpload } from '../ilearn/api.js';
 import type { SyncContext } from './sync.js';
 
-type FileCtx = Pick<SyncContext, 'db' | 'config'>;
+type FileCtx = Pick<SyncContext, 'db'>;
 
 /** 檔名及資料夾名：去掉路徑字元、控制字元及開頭的點。 */
 export function sanitizeName(s: string): string {
@@ -30,13 +30,12 @@ function isAbort(e: unknown): boolean {
 export function registerUploads(ctx: FileCtx, itemId: string, courseId: string, uploads: ApiUpload[]): void {
   if (uploads.length === 0) return;
   const existing = new Map(listFiles(ctx.db, { course_id: courseId }).map((f) => [f.upload_id, f]));
-  const skipDisallowed = ctx.config.files.download_disallowed === 'skip';
 
   for (const u of uploads) {
     const id = String(u.id);
     const link = u.link ? u.link : null;
     const allow = u.allow_download !== false;
-    const wanted: StoredFile['status'] = link ? 'link' : !allow && skipDisallowed ? 'skipped' : 'pending';
+    const wanted: StoredFile['status'] = link ? 'link' : !allow ? 'skipped' : 'pending';
     const prev = existing.get(id);
 
     if (!prev) {
@@ -153,9 +152,12 @@ export async function downloadFiles(
   signal: AbortSignal | undefined,
   courses: { done: number; total: number },
 ): Promise<{ done: number; failed: { name: string; reason: string }[] }> {
-  const rows = [...listFiles(ctx.db, { status: 'pending' }), ...listFiles(ctx.db, { status: 'failed' })].sort(
-    (a, b) => (a.upload_id < b.upload_id ? -1 : a.upload_id > b.upload_id ? 1 : 0),
-  );
+  const queued = [...listFiles(ctx.db, { status: 'pending' }), ...listFiles(ctx.db, { status: 'failed' })];
+  // 老師關閉下載的檔案一律不請求；舊資料若還排在佇列，這裡改記為略過
+  for (const f of queued) if (!f.allow_download) upsertFile(ctx.db, { ...f, status: 'skipped' });
+  const rows = queued
+    .filter((f) => f.allow_download)
+    .sort((a, b) => (a.upload_id < b.upload_id ? -1 : a.upload_id > b.upload_id ? 1 : 0));
   const failed: { name: string; reason: string }[] = [];
   let done = 0;
   let bytes = 0;

@@ -14,7 +14,6 @@ export interface Config {
   quiet_hours: { start: string; end: string };
   reminders: { offsets: string[] };
   force_push_offsets: string[];
-  files: { download_disallowed: 'skip' | 'download' };
   summaries: { daily_limit: number; courses: Record<string, { materials: boolean; announcements: boolean }> };
   course_overrides: Record<
     string,
@@ -36,7 +35,6 @@ export const DEFAULT_CONFIG: Config = {
   quiet_hours: { start: '00:00', end: '07:00' },
   reminders: { offsets: ['P1D', 'PT3H'] },
   force_push_offsets: ['PT3H'],
-  files: { download_disallowed: 'skip' },
   summaries: { daily_limit: 20, courses: {} },
   course_overrides: {},
   period_times: structuredClone(THU_PERIOD_TIMES),
