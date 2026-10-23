@@ -100,6 +100,7 @@ ilearn service status
    - Linux：bash -lic 'npm install -g thu-ilearn'
    - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
    出現權限錯誤（EACCES）不要使用 sudo，把錯誤訊息告訴我。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
+   剛完成安裝時，停下來請我自己在終端執行 ilearn setup（會要求學號與密碼，你不可以代為輸入或讀取），等我回覆「設定完成」再繼續。
 3. 之後執行 ilearn 一律用這個格式（下文寫「ilearn」的地方都照這樣換）：
    "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" <參數>
    例如 "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" --version。Windows 的路徑分隔用 \。先執行 --version 確認有版本號。
