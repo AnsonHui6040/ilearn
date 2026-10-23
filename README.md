@@ -55,31 +55,30 @@ ilearn service status
 ```text
 請幫我在這台電腦安裝 thu-ilearn（東海大學 iLearn 同步工具，原始碼：https://github.com/AnsonHui6040/ilearn ）。
 
-1. 找出我自己的 Node。你的執行環境可能和我平常用的終端不同（桌面版 agent 常內建自己的 Node 與 PATH），所以要透過我的登入 shell 查詢，不要直接執行 node 或 npm。依系統執行其中一行：
-   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
-   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
-   - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); "NODE=$((Get-Command node).Source)"; "NODE_VERSION=$(node -v)"; "NPM_ROOT=$(npm root -g)"
-   開頭的 env -i 會清掉你自己程式的環境變數，讓登入 shell 只依我的設定找 Node，不要省略。記下 NODE 與 NPM_ROOT 兩個絕對路徑。如果 NODE 位在你自己程式的資料夾（例如路徑含 codex、claude、resources/node-runtime 或 .app/Contents），表示查到的是你內建的 Node，不是我的：不要安裝，停下來把結果告訴我。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
+1. 找出我自己的家目錄與 Node。你的執行環境可能和我平常用的終端不同：桌面版或常駐 agent 常內建自己的 Node、改過 PATH，甚至把 HOME 指到自己的資料夾。所以每一行都先從系統帳號資料取得我真正的家目錄，再用乾淨的登入 shell 查詢。依系統執行其中一行（整行照抄，不要省略開頭）：
+   - macOS：U=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}'); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'echo "USER_HOME=$HOME"; echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - Linux：U=$(getent passwd "$(id -un)" | cut -d: -f6); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'echo "USER_HOME=$HOME"; echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - Windows（PowerShell）：$U=(Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)").ProfileImagePath; $env:USERPROFILE=$U; $env:APPDATA="$U\AppData\Roaming"; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); "USER_HOME=$U"; "NODE=$((Get-Command node).Source)"; "NODE_VERSION=$(node -v)"; "NPM_ROOT=$(npm root -g)"
+   記下 USER_HOME、NODE、NPM_ROOT 三個絕對路徑。如果 NODE 位在你自己程式的資料夾（例如路徑含 codex、claude、hermes、resources/node-runtime 或 .app/Contents），表示查到的不是我的 Node：不要安裝，停下來把結果告訴我。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
 2. 如果 NPM_ROOT 底下沒有 thu-ilearn 資料夾，用同一個方式安裝：
-   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
-   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
-   - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
-   出現權限錯誤（EACCES，常見於用系統套件或官方安裝檔裝的 Node）：不要使用 sudo。先問我：「要把 npm 的全域安裝位置改到你的家目錄 ~/.local 嗎？這是 npm 官方建議的做法，不需要 sudo，只會寫入 ~/.npmrc。」我同意後才執行：
-     env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm config set prefix "$HOME/.local"'（macOS 把 bash 換成 /bin/zsh）
-     然後重做第 1 步，NPM_ROOT 會變成 ~/.local/lib/node_modules，再重做這一步的安裝。
-     安裝成功後執行 env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'command -v ilearn'（macOS 用 /bin/zsh）。沒有輸出時，告訴我需要把 ~/.local/bin 加入 PATH，問我同意後在 ~/.profile（macOS：~/.zprofile）最後加上一行 export PATH="$HOME/.local/bin:$PATH"，並提醒我開新的終端視窗；在那之前，請我用完整路徑執行 ilearn，例如 ~/.local/bin/ilearn setup。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
-3. 之後執行 ilearn 一律用這個格式（下文寫「ilearn」的地方都照這樣換）：
-   "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" <參數>
-   例如 "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" --version。Windows 的路徑分隔用 \。先執行 --version 確認有版本號。
+   - macOS：U=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}'); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
+   - Linux：U=$(getent passwd "$(id -un)" | cut -d: -f6); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
+   - Windows（PowerShell）：$U=(Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)").ProfileImagePath; $env:USERPROFILE=$U; $env:APPDATA="$U\AppData\Roaming"; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
+   出現權限錯誤（EACCES，常見於用系統套件或官方安裝檔裝的 Node）：不要使用 sudo。先問我：「要把 npm 的全域安裝位置改到你的家目錄 USER_HOME/.local 嗎？這是 npm 官方建議的做法，不需要 sudo，只會寫入 USER_HOME/.npmrc。」我同意後才執行同一行，把最後的 'npm install -g thu-ilearn' 換成 'npm config set prefix "$HOME/.local"'，然後重做第 1 步（NPM_ROOT 會變成 USER_HOME/.local/lib/node_modules），再重做這一步的安裝。安裝成功後，用同一行執行 'command -v ilearn'；沒有輸出時，告訴我需要把 USER_HOME/.local/bin 加入 PATH，問我同意後在 USER_HOME/.profile（macOS：USER_HOME/.zprofile）最後加上 export PATH="$HOME/.local/bin:$PATH"，並提醒我開新的終端視窗；在那之前，請我用完整路徑 USER_HOME/.local/bin/ilearn 執行。
+   如果你的沙盒擋住網路或寫入 USER_HOME，依你的介面向我申請核准，不要改用其他方法繞過。
+3. 之後執行 ilearn 一律用這個格式，資料夾固定指向我的家目錄（下文寫「ilearn」的地方都照這樣換）：
+   - macOS／Linux：ILEARN_HOME="<USER_HOME>/.thu-ilearn" "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" <參數>
+   - Windows（PowerShell）：$env:ILEARN_HOME="<USER_HOME>\.thu-ilearn"; & "<NODE>" "<NPM_ROOT>\thu-ilearn\dist\cli\index.js" <參數>
+   先執行 --version 確認有版本號。
 4. 停下來，請我自己在終端執行 ilearn setup。設定精靈會要求輸入學號與密碼，你不可以代為輸入，也不可以讀取或保存我的帳號密碼。等我回覆「設定完成」再繼續。
-5. 把 thu-ilearn 加入你的 MCP 設定：名稱 thu-ilearn，指令填 NODE 的絕對路徑，參數依序為 <NPM_ROOT>/thu-ilearn/dist/cli/index.js 與 mcp。Claude Code 可以執行 claude mcp add thu-ilearn -- "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" mcp。
+5. 把 thu-ilearn 加入你的 MCP 設定：名稱 thu-ilearn，指令填 NODE 的絕對路徑，參數依序為 <NPM_ROOT>/thu-ilearn/dist/cli/index.js 與 mcp，環境變數 ILEARN_HOME 設為 <USER_HOME>/.thu-ilearn。Claude Code 可以執行 claude mcp add thu-ilearn -e ILEARN_HOME="<USER_HOME>/.thu-ilearn" -- "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" mcp。
 6. 設定精靈最後會詢問是否安裝背景服務。如果我沒有安裝，提醒我自己在終端執行 ilearn service install（需要互動終端，你不可以代為安裝），再用 ilearn service status 確認。
 7. 閱讀 <NPM_ROOT>/thu-ilearn/AGENTS.md，了解指令、事件格式與權限，特別是開頭的「使用方法」。讀不到時改讀 https://github.com/AnsonHui6040/ilearn/blob/main/AGENTS.md 。如果你支援 Skill，把同一資料夾的 SKILL.md 加入你的 skill。
 8. 執行 ilearn status --json 與 ilearn tasks --json，用三到五行告訴我同步狀態與未完成的作業數量。
 
 之後的規則：
 - 一律用第 3 步的格式執行 ilearn。
-- ilearn 會讀寫資料夾 ~/.thu-ilearn（Windows：%USERPROFILE%\.thu-ilearn），ack 會寫入其中的 outbox/cursors。沙盒擋住時依你的介面向我申請核准，不要繞過。
+- ilearn 會讀寫資料夾 <USER_HOME>/.thu-ilearn，ack 會寫入其中的 outbox/cursors。沙盒擋住時依你的介面向我申請核准，不要繞過。
 - 只讀取資料。寫入摘要或修改設定只在我允許而且要求時才做，做法見 AGENTS.md。不可以執行 ilearn setup、ilearn login、ilearn mark-teammate、ilearn rules edit、ilearn ui，也不可以直接修改 config.yaml 或 rules.yaml。
 - 不可以讀取帳號、密碼、cookie 或 session 檔案。
 - 指令回傳 exit code 2 時，提醒我自己執行 ilearn login。
@@ -87,31 +86,30 @@ ilearn service status
 
 ### 自架 agent（Hermes、OpenClaw 等常駐的 agent）
 
-先完成上面的安裝，讓 `ilearn` 指令在 agent 所在的機器可用，再把下面的提示詞交給你的 agent。桌面版 agent（例如 Codex、Claude 桌面 app）常使用自己內建的 Node 與 PATH，提示詞會讓 agent 透過你的登入 shell 找到你自己的 Node，並以絕對路徑執行。
+先完成上面的安裝，讓 `ilearn` 指令在 agent 所在的機器可用，再把下面的提示詞交給你的 agent。桌面版或常駐 agent（例如 Codex、Claude 桌面 app、Hermes）常使用自己內建的 Node、PATH，甚至自己的 HOME；提示詞會讓 agent 從系統帳號資料找到你真正的家目錄與 Node，並以絕對路徑與 ILEARN_HOME 執行。
 
 ```text
 你要負責把我的東海大學 iLearn 通知轉告給我。這台機器應該已經安裝 thu-ilearn。
 
 開始前：
-1. 找出我自己的 Node。你的執行環境可能和我平常用的終端不同（桌面版 agent 常內建自己的 Node 與 PATH），所以要透過我的登入 shell 查詢，不要直接執行 node 或 npm。依系統執行其中一行：
-   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
-   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
-   - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); "NODE=$((Get-Command node).Source)"; "NODE_VERSION=$(node -v)"; "NPM_ROOT=$(npm root -g)"
-   開頭的 env -i 會清掉你自己程式的環境變數，讓登入 shell 只依我的設定找 Node，不要省略。記下 NODE 與 NPM_ROOT 兩個絕對路徑。如果 NODE 位在你自己程式的資料夾（例如路徑含 codex、claude、resources/node-runtime 或 .app/Contents），表示查到的是你內建的 Node，不是我的：不要安裝，停下來把結果告訴我。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
+1. 找出我自己的家目錄與 Node。你的執行環境可能和我平常用的終端不同：桌面版或常駐 agent 常內建自己的 Node、改過 PATH，甚至把 HOME 指到自己的資料夾。所以每一行都先從系統帳號資料取得我真正的家目錄，再用乾淨的登入 shell 查詢。依系統執行其中一行（整行照抄，不要省略開頭）：
+   - macOS：U=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}'); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'echo "USER_HOME=$HOME"; echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - Linux：U=$(getent passwd "$(id -un)" | cut -d: -f6); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'echo "USER_HOME=$HOME"; echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - Windows（PowerShell）：$U=(Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)").ProfileImagePath; $env:USERPROFILE=$U; $env:APPDATA="$U\AppData\Roaming"; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); "USER_HOME=$U"; "NODE=$((Get-Command node).Source)"; "NODE_VERSION=$(node -v)"; "NPM_ROOT=$(npm root -g)"
+   記下 USER_HOME、NODE、NPM_ROOT 三個絕對路徑。如果 NODE 位在你自己程式的資料夾（例如路徑含 codex、claude、hermes、resources/node-runtime 或 .app/Contents），表示查到的不是我的 Node：不要安裝，停下來把結果告訴我。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
 2. 如果 NPM_ROOT 底下沒有 thu-ilearn 資料夾（還沒安裝），用同一個方式安裝：
-   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
-   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
-   - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
-   出現權限錯誤（EACCES，常見於用系統套件或官方安裝檔裝的 Node）：不要使用 sudo。先問我：「要把 npm 的全域安裝位置改到你的家目錄 ~/.local 嗎？這是 npm 官方建議的做法，不需要 sudo，只會寫入 ~/.npmrc。」我同意後才執行：
-     env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm config set prefix "$HOME/.local"'（macOS 把 bash 換成 /bin/zsh）
-     然後重做第 1 步，NPM_ROOT 會變成 ~/.local/lib/node_modules，再重做這一步的安裝。
-     安裝成功後執行 env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'command -v ilearn'（macOS 用 /bin/zsh）。沒有輸出時，告訴我需要把 ~/.local/bin 加入 PATH，問我同意後在 ~/.profile（macOS：~/.zprofile）最後加上一行 export PATH="$HOME/.local/bin:$PATH"，並提醒我開新的終端視窗；在那之前，請我用完整路徑執行 ilearn，例如 ~/.local/bin/ilearn setup。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
+   - macOS：U=$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory | awk '{print $2}'); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
+   - Linux：U=$(getent passwd "$(id -un)" | cut -d: -f6); env -i HOME="$U" USER="$(id -un)" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
+   - Windows（PowerShell）：$U=(Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)").ProfileImagePath; $env:USERPROFILE=$U; $env:APPDATA="$U\AppData\Roaming"; $env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
+   出現權限錯誤（EACCES，常見於用系統套件或官方安裝檔裝的 Node）：不要使用 sudo。先問我：「要把 npm 的全域安裝位置改到你的家目錄 USER_HOME/.local 嗎？這是 npm 官方建議的做法，不需要 sudo，只會寫入 USER_HOME/.npmrc。」我同意後才執行同一行，把最後的 'npm install -g thu-ilearn' 換成 'npm config set prefix "$HOME/.local"'，然後重做第 1 步（NPM_ROOT 會變成 USER_HOME/.local/lib/node_modules），再重做這一步的安裝。安裝成功後，用同一行執行 'command -v ilearn'；沒有輸出時，告訴我需要把 USER_HOME/.local/bin 加入 PATH，問我同意後在 USER_HOME/.profile（macOS：USER_HOME/.zprofile）最後加上 export PATH="$HOME/.local/bin:$PATH"，並提醒我開新的終端視窗；在那之前，請我用完整路徑 USER_HOME/.local/bin/ilearn 執行。
+   如果你的沙盒擋住網路或寫入 USER_HOME，依你的介面向我申請核准，不要改用其他方法繞過。
    剛完成安裝時，停下來請我自己在終端執行 ilearn setup（會要求學號與密碼，你不可以代為輸入或讀取），等我回覆「設定完成」再繼續。
-3. 之後執行 ilearn 一律用這個格式（下文寫「ilearn」的地方都照這樣換）：
-   "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" <參數>
-   例如 "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" --version。Windows 的路徑分隔用 \。先執行 --version 確認有版本號。
+3. 之後執行 ilearn 一律用這個格式，資料夾固定指向我的家目錄（下文寫「ilearn」的地方都照這樣換）：
+   - macOS／Linux：ILEARN_HOME="<USER_HOME>/.thu-ilearn" "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" <參數>
+   - Windows（PowerShell）：$env:ILEARN_HOME="<USER_HOME>\.thu-ilearn"; & "<NODE>" "<NPM_ROOT>\thu-ilearn\dist\cli\index.js" <參數>
+   先執行 --version 確認有版本號。
 4. 閱讀 <NPM_ROOT>/thu-ilearn/AGENTS.md，特別是開頭的「使用方法」；讀不到時改讀 https://github.com/AnsonHui6040/ilearn/blob/main/AGENTS.md 。
-5. ilearn 會讀寫資料夾 ~/.thu-ilearn（Windows：%USERPROFILE%\.thu-ilearn），ack 會寫入其中的 outbox/cursors。沙盒擋住時依你的介面向我申請核准，不要繞過。
+5. ilearn 會讀寫資料夾 <USER_HOME>/.thu-ilearn，ack 會寫入其中的 outbox/cursors。沙盒擋住時依你的介面向我申請核准，不要繞過。
 
 接收通知（二選一）：
 A. 每 5 分鐘執行 ilearn events --deliverable --agent hermes --json，逐則處理後執行 ilearn events ack hermes <event_id>。
@@ -285,7 +283,7 @@ delivery:
 
 「agent 權限」另有一項「修改設定」，預設不允許。允許後，agent 只能用 `ilearn config set` 與 `ilearn rules add` 修改夜間時段、截止提醒、通知規則（啟用、等級、關鍵詞、新增）、每科的規則與提醒覆寫、摘要開關與每日上限、資料夾檢視、更新頻率。帳號、密碼、推送方式（hook 指令與 webhook 網址）、執行環境、節次時間、背景服務、更新、解除安裝與權限本身，agent 一律不能改。每次修改都會寫入 `data/agent-changes.jsonl`，7 日內的修改會顯示在 `ilearn ui` 首頁最上方與「提醒」分頁，也列在 `總覽.md` 的系統提示。
 
-MCP 客戶端設定範例（桌面版客戶端找不到 `ilearn` 時，`command` 改填 Node 的絕對路徑，`args` 改為 `["<npm root -g>/thu-ilearn/dist/cli/index.js", "mcp"]`；兩個路徑用「交給 AI agent 安裝」第 1 步查詢）：
+MCP 客戶端設定範例（桌面版客戶端找不到 `ilearn` 時，`command` 改填 Node 的絕對路徑，`args` 改為 `["<npm root -g>/thu-ilearn/dist/cli/index.js", "mcp"]`，並加上 `"env": { "ILEARN_HOME": "<你的家目錄>/.thu-ilearn" }`；路徑用「交給 AI agent 安裝」第 1 步查詢）：
 
 ```json
 {
