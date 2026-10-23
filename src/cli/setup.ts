@@ -193,7 +193,7 @@ const say = (s = ''): void => void process.stdout.write(`${s}\n`);
 
 /* ---------- 互動流程 ---------- */
 
-type Prompts = typeof import('@inquirer/prompts');
+export type Prompts = typeof import('@inquirer/prompts');
 
 const TOTAL_STEPS = 8;
 const header = (n: number, title: string): void => say(stepHeader(n, TOTAL_STEPS, title));
@@ -267,8 +267,9 @@ function isPromptExit(e: unknown): boolean {
   return e instanceof Error && e.name === 'ExitPromptError';
 }
 
-export async function runSetup(ctx: CliContext): Promise<void> {
-  const p = await import('@inquirer/prompts');
+/** prompts 可由呼叫端注入（測試與裝置測試腳本用）；省略時使用真正的互動式提問。 */
+export async function runSetup(ctx: CliContext, prompts?: Prompts): Promise<void> {
+  const p = prompts ?? (await import('@inquirer/prompts'));
   const hadConfig = existsSync(join(ctx.root, 'config.yaml'));
   const d = setupDefaults(hadConfig ? ctx.config : null, detectEnvironment(process.env));
   const t = setupTracker(ctx.root);

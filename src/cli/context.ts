@@ -24,6 +24,12 @@ export class CliExit extends Error {
   }
 }
 
+/** 測試或裝置測試腳本用：取代真實的登入與 session 檢查（不連線）。 */
+export interface AuthHooks {
+  login: (ctx: CliContext, username: string, password: string) => Promise<void>;
+  sessionUser: (ctx: CliContext) => Promise<{ userId: number } | null>;
+}
+
 export interface CliContext extends SyncContext {
   username: string | null;
   /** 是否已有可用的 session（測試以假 API 注入時視為有）。 */
@@ -32,6 +38,8 @@ export interface CliContext extends SyncContext {
   wrapApi?: (api: IlearnApi) => IlearnApi;
   /** 以已保存密碼重新登入；測試可覆寫。 */
   relogin?: (ctx: CliContext) => Promise<boolean>;
+  /** 有設定時，loginWith 與 savedSessionUser 改走這裡，不連線。 */
+  auth?: AuthHooks;
   rulesWarning?: string;
 }
 
@@ -42,6 +50,7 @@ export interface ContextOverrides {
   root: string;
   userId: number;
   relogin: (ctx: CliContext) => Promise<boolean>;
+  auth: AuthHooks;
 }
 
 interface Account {
@@ -141,6 +150,7 @@ function build(root: string, db: DatabaseSync, outbox: Outbox, o: Partial<Contex
   };
   if (rules.warning !== undefined) ctx.rulesWarning = rules.warning;
   if (o.relogin !== undefined) ctx.relogin = o.relogin;
+  if (o.auth !== undefined) ctx.auth = o.auth;
   return ctx;
 }
 
