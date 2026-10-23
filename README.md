@@ -16,9 +16,9 @@
 
 - Node.js 22.13 以上
 - 東海大學學號與 iLearn 密碼
-- macOS 或 Linux。Windows 尚未測試。
+- macOS、Linux 或 Windows。三個平台都已通過裝置測試；Windows 的背景服務（工作排程器）尚未實機驗證。
 
-目前為測試版（0.x），設定精靈中的「教材檔案摘要」與「老師公告摘要」尚未提供，選擇會保留到功能推出。
+目前為測試版（0.x）。
 
 ## 安裝
 
@@ -102,10 +102,16 @@ hermes 是你的 agent 名稱，可以換成你自己的名稱，但之後都要
 
 1. 偵測環境（本機桌面或 VPS），可自行更改。
 2. 輸入學號與密碼（密碼以 * 顯示）。登入失敗會顯示原因並讓你重試。
-3. 選擇是否保存密碼。桌面環境存入系統憑證庫；VPS 會先顯示風險提醒，確認後以加密檔案保存（權限 0600）。選擇不保存時只保存 session，過期後需要執行 `ilearn login`。
-4. 開始第一次完整提取：本學期所有課程、作業、公告、考試、分數與教材檔案。過程在背景進行，不必等待。
-5. 提取期間完成其餘設定：啟用的介面、推送方式（outbox 檔案必備，可另選本機指令 hook 或本機 webhook）、通知規則、每科摘要。
-6. 顯示完成摘要：課程數、未完成作業、3 日內截止與考試、下載結果。
+3. 選擇是否保存密碼。桌面環境存入系統憑證庫；VPS 會先顯示風險提醒，確認後以加密檔案保存（權限 0600）。選擇不保存時只保存 session，過期後需要執行 `ilearn login`。第 3 步完成後開始第一次完整提取：本學期所有課程、作業、公告、考試、分數與教材檔案。過程在背景進行，不必等待。
+4. 啟用的介面：終端機，或再加上資料夾（Markdown 檢視）。
+5. 推送方式：outbox 檔案必備，可另選本機指令 hook 或本機 webhook。
+6. 通知規則。
+7. 教材檔案摘要：選擇要啟用的課程。
+8. 老師公告摘要：選擇要啟用的課程，最後用一題勾選「允許 agent：」，可選「寫入摘要」與「修改設定」兩項，預設都不勾選（之後重跑則帶入目前的選擇）。沒有任何課程啟用摘要時也會問。
+
+第 8 步之後是確認畫面：列出第 1 到第 8 步的全部答案，可選「確認完成」，或回頭修改第 1、4、5、6、7、8 步，已回答的內容會成為預設值。第 2、3 步涉及帳號與密碼，要更改請執行 `ilearn login`，或在 `ilearn ui` 的「系統設定 > 帳號」操作。在確認畫面按 Ctrl-C 中斷後重跑，會略過已完成的步驟，直接回到確認畫面。
+
+確認後顯示完成摘要：課程數、未完成作業、3 日內截止與考試、下載結果。
 
 第一次提取可以用 Ctrl-C 中斷，下次執行 `ilearn setup` 或 `ilearn sync` 會從中斷處繼續。第一次提取本身不會推送任何通知；要把目前需要處理的事項推送給 agent，請執行 `ilearn reload`。
 
@@ -183,6 +189,10 @@ delivery:
 | `ilearn grades [--course <id>] [--json]` | 分數與評語 |
 | `ilearn events [--deliverable] [--agent <名稱>] [--type <類型>] [--json]` | 查詢事件 |
 | `ilearn events ack <名稱> <event_id>` | 標記 agent 已處理到此事件 |
+| `ilearn summaries pending [--json]` | 列出還沒有摘要（或原文已變動）的公告與教材 |
+| `ilearn summaries write <target_id> --hash <h> [--agent <名稱>]` | 從標準輸入讀取摘要文字（最多 2000 字）並寫入；需要你先允許 agent 寫入摘要 |
+| `ilearn config get [--json]` | 目前的 agent 權限，以及 agent 可以修改的設定值（唯讀） |
+| `ilearn config set <key> <value> --agent <名稱>`、`ilearn rules add --name ... --keywords ... --action ... --agent <名稱>` | agent 修改設定或新增通知規則；需要你先允許 agent 修改設定，每次修改都會記錄 |
 | `ilearn files search <關鍵字>`、`ilearn file text <id>` | 以檔名搜尋；輸出 .txt 與 .md 的文字 |
 | `ilearn mark-teammate <item_id> [--undo]` | 標記小組作業「隊員已交」，只能由你在互動終端操作 |
 | `ilearn rules list`、`ilearn rules test [檔案]`、`ilearn rules edit` | 列出、試算、編輯關鍵詞規則 |
@@ -200,8 +210,8 @@ delivery:
 | 1 | 首頁 | 需要處理的作業與影片：逾期、7 日內、之後、尚未開放 |
 | 2 | 課程 | 代號、上課時間、教室；按 Enter 進入課程，查看待辦、公告、教材檔案、分數等 |
 | 3 | 提醒 | 系統提示、今天起會發出的截止提醒、今天起發布的公告 |
-| 4 | 課程設定 | 每科的通知規則與截止提醒 |
-| 5 | 系統設定 | Reload、立即同步、介面、推送方式、夜間時段、截止提醒、通知規則（含關鍵詞與試算）、帳號、背景服務、系統更新、Reset、完全移除 |
+| 4 | 課程設定 | 每科的通知規則、截止提醒，以及教材檔案與老師公告的摘要開關 |
+| 5 | 系統設定 | Reload、立即同步、介面、推送方式、夜間時段、截止提醒、通知規則（含關鍵詞與試算）、摘要（每日上限、今天已寫入數量）、agent 權限（是否允許 agent 寫入摘要、修改設定）、帳號、背景服務、系統更新、Reset、完全移除 |
 
 操作方式：方向鍵移動或切換左右欄，空白鍵剔選，Enter 確認或開啟，Esc 返回，q 離開。剔選後要再按 Enter 看過「將變更 N 項」並確認才會寫入。終端寬度不足 80 欄時改為單欄。
 
@@ -215,25 +225,29 @@ delivery:
 <資料根>/
 ├── config.yaml
 ├── rules.yaml                 自訂規則（沒有這個檔案時使用內建規則）
+├── 總覽.md                    資料夾檢視（啟用資料夾介面時產生）
+├── 課程/<科名>.md
+├── 保留/<學期>/<科名>.md      舊學期
 ├── files/<學期>/<課程>/<分類>/<檔名>
 ├── outbox/
 │   ├── events/YYYY-MM-DD.jsonl
 │   ├── cursors/<agent>.json
 │   ├── schema/event.v1.json
 │   └── 通知.md
-└── data/ilearn.sqlite3
+└── data/
+    ├── ilearn.sqlite3
+    └── agent-changes.jsonl    agent 修改設定的紀錄
 ```
 
-教材檔案如果老師關閉了下載權限，預設只記錄檔名與 iLearn 連結，不會下載。想要嘗試下載，請在 `config.yaml` 設定：
-
-```yaml
-files:
-  download_disallowed: download
-```
+資料夾檢視是唯讀的 Markdown，修改它不會影響任何資料。教材檔案如果老師關閉了下載權限，一律不會下載，只記錄檔名與 iLearn 連結。
 
 ## 給 AI agent
 
 請看 [AGENTS.md](AGENTS.md)，內有指令、MCP 工具、事件格式與 agent 權限。`ilearn ui` 只供本人在互動終端使用，agent 在非互動環境執行會被拒絕。支援 Skill 的 agent 可以使用 [SKILL.md](SKILL.md)。
+
+摘要由你的 agent 負責撰寫，本工具不會呼叫任何 AI。流程是：在 `ilearn ui` 的「課程設定」啟用要摘要的課程，並在設定精靈第 8 步或「系統設定 > agent 權限」允許 agent 寫入摘要；agent 用 `ilearn summaries pending` 取得待摘要的公告與教材，寫好後用 `ilearn summaries write` 寫回。摘要會顯示在 `ilearn ui` 的課程頁，也會出現在 `ilearn course` 與 `ilearn announcements` 的 `summary` 欄位。每天預設最多寫入 20 則。
+
+「agent 權限」另有一項「修改設定」，預設不允許。允許後，agent 只能用 `ilearn config set` 與 `ilearn rules add` 修改夜間時段、截止提醒、通知規則（啟用、等級、關鍵詞、新增）、每科的規則與提醒覆寫、摘要開關與每日上限、資料夾檢視、更新頻率。帳號、密碼、推送方式（hook 指令與 webhook 網址）、執行環境、節次時間、背景服務、更新、解除安裝與權限本身，agent 一律不能改。每次修改都會寫入 `data/agent-changes.jsonl`，7 日內的修改會顯示在 `ilearn ui` 首頁最上方與「提醒」分頁，也列在 `總覽.md` 的系統提示。
 
 MCP 客戶端設定範例：
 

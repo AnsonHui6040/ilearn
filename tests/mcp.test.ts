@@ -53,12 +53,12 @@ async function call(c: Client, name: string, args: Record<string, unknown> = {})
 const parse = (r: CallResult): unknown => JSON.parse(r.content[0]?.text ?? 'null');
 
 describe('MCP server', () => {
-  it('exposes exactly the read tools plus events_ack', async () => {
+  it('exposes exactly the read tools plus the permission-gated writers', async () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'ilearn-mcp-')));
     const { tools } = await c.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...MCP_TOOLS].sort());
     for (const t of tools) {
-      expect(t.annotations?.readOnlyHint, t.name).toBe(t.name !== 'events_ack');
+      expect(t.annotations?.readOnlyHint, t.name).toBe(!['events_ack', 'summaries_write', 'config_set', 'rules_add'].includes(t.name));
       expect(t.annotations?.destructiveHint ?? false, t.name).toBe(false);
     }
   });
@@ -67,7 +67,7 @@ describe('MCP server', () => {
     const c = await connect(mkdtempSync(join(tmpdir(), 'ilearn-mcp-')));
     const { tools } = await c.listTools();
     const text = JSON.stringify(tools.map((t) => [t.name, t.inputSchema]));
-    for (const banned of ['sync', 'reload', 'login', 'logout', 'setup', 'mark', 'teammate', 'rules_edit', 'password', 'cookie', 'session', 'credential', 'config']) {
+    for (const banned of ['sync', 'reload', 'login', 'logout', 'setup', 'mark', 'teammate', 'rules_edit', 'password', 'cookie', 'session', 'credential']) {
       expect(tools.map((t) => t.name).filter((n) => n.includes(banned)), banned).toEqual([]);
     }
     expect(text).not.toMatch(/password|cookie|credential/i);

@@ -31,10 +31,15 @@ import {
   eventsText,
   filesText,
   gradesText,
+  pendingSummariesText,
   statusText,
   tasksText,
 } from './format.js';
 import { formatProgress, formatSummary, runLogin, runSetup, summaryExtras } from './setup.js';
+import { pendingSummaries, writeSummary } from '../summaries/summaries.js';
+import { renderFolderView } from '../folder/folder.js';
+import { configGet, configSet, rulesAdd } from '../agent/settings.js';
+import { formatChangeValue } from '../agent/changes.js';
 
 const write = (s: string): void => void process.stdout.write(`${s}\n`);
 const warn = (s: string): void => void process.stderr.write(`${s}\n`);
@@ -266,16 +271,46 @@ file
     out(o.json, r, () => r.text);
   });
 
+const summaries = program.command('summaries').description('公告與教材的摘要：由 agent 寫回，本工具不會呼叫任何 AI');
+summaries
+  .command('pending')
+  .description('列出還沒有摘要（或原文已變動）的公告與教材，數量受每日上限限制')
+  .option('--json', '以 JSON 輸出')
+  .action((o: { json?: boolean }) => {
+    const r = pendingSummaries(createReadContext());
+    out(o.json, r, () => pendingSummariesText(r));
+  });
+summaries
+  .command('write <target_id>')
+  .description('從標準輸入讀取摘要文字並寫入（需要使用者允許 agent 寫入摘要）')
+  .requiredOption('--hash <source_hash>', 'pending 回傳的 source_hash')
+  .option('--agent <名稱>', '你的 agent 名稱（英數、. _ -，最長 64 字元）')
+  .option('--json', '以 JSON 輸出')
+  .action(async (targetId: string, o: { hash: string; agent?: string; json?: boolean }) => {
+    const text = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      process.stdin.on('data', (c: Buffer) => chunks.push(c));
+      process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      process.stdin.on('error', reject);
+    });
+    const ctx = createSetUpContext();
+    const r = writeSummary(ctx, { target_id: targetId, source_hash: o.hash, text, agent: o.agent });
+    renderFolderView(ctx);
+    out(o.json, r, () => `已寫入摘要 ${r.target_id}，今天還可以寫 ${r.remaining_today} 則`);
+  });
+
 program
   .command('mark-teammate <item_id>')
   .description('標記小組作業「隊員已交」（只能由本人在互動終端操作）')
   .option('--undo', '取消標記')
   .action((itemId: string, o: { undo?: boolean }) => {
-    const r = markTeammateCommand(createSetUpContext(), {
+    const ctx = createSetUpContext();
+    const r = markTeammateCommand(ctx, {
       itemId,
       ...(o.undo ? { undo: true } : {}),
       isTTY: Boolean(process.stdin.isTTY),
     });
+    renderFolderView(ctx);
     write(r.completion === 'pending' ? `已取消標記 ${r.id}` : `已標記 ${r.id} 為隊員已交`);
   });
 
@@ -314,6 +349,47 @@ rules
       },
     });
     write(r.saved ? '已儲存 rules.yaml' : '沒有儲存');
+  });
+
+rules
+  .command('add')
+  .description('新增一條通知規則（需要使用者允許 agent 修改設定，會記錄並顯示給使用者）')
+  .requiredOption('--name <名稱>', '規則名稱')
+  .requiredOption('--keywords <關鍵詞>', '任一關鍵詞，以逗號分隔')
+  .requiredOption('--action <等級>', 'record、push 或 force_push')
+  .option('--course <id,...>', '只適用這些課程（預設全部課程）')
+  .requiredOption('--agent <名稱>', '你的 agent 名稱（英數、. _ -，最長 64 字元）')
+  .option('--json', '以 JSON 輸出')
+  .action((o: { name: string; keywords: string; action: string; course?: string; agent: string; json?: boolean }) => {
+    const r = rulesAdd(createSetUpContext(), { name: o.name, keywords: o.keywords, action: o.action, courses: o.course, agent: o.agent });
+    out(o.json, r, () => `已新增規則 ${r.id}「${r.name}」`);
+  });
+
+const config = program.command('config').description('agent 可以讀取與（經使用者允許後）修改的設定');
+config
+  .command('get')
+  .description('目前的 agent 權限與可修改的設定值（唯讀）')
+  .option('--json', '以 JSON 輸出')
+  .action((o: { json?: boolean }) => {
+    const r = configGet(createReadContext());
+    out(o.json, r, () =>
+      [
+        `agent 權限：寫入摘要 ${r.agent_permissions.summaries ? '允許' : '不允許'}，修改設定 ${r.agent_permissions.settings ? '允許' : '不允許'}`,
+        `夜間時段：${r.settings.quiet_hours.start}–${r.settings.quiet_hours.end}`,
+        `截止提醒：${r.settings.reminders.offsets.join('、')}（強制推送：${r.settings.force_push_offsets.join('、') || '無'}）`,
+        ...r.settings.rules.map((x) => `規則 ${x.id}  ${x.enabled ? '啟用' : '停用'}  ${x.action}  ${x.name}：${x.keywords.join('、')}`),
+        `資料夾檢視：${r.settings.interfaces.folder ? '啟用' : '停用'}；更新檢查：${r.settings.updates.check}；摘要每日上限：${r.settings.summaries.daily_limit}`,
+      ].join('\n'),
+    );
+  });
+config
+  .command('set <key> <value>')
+  .description('修改一項設定（需要使用者允許 agent 修改設定，會記錄並顯示給使用者）')
+  .requiredOption('--agent <名稱>', '你的 agent 名稱（英數、. _ -，最長 64 字元）')
+  .option('--json', '以 JSON 輸出')
+  .action((key: string, value: string, o: { agent: string; json?: boolean }) => {
+    const r = configSet(createSetUpContext(), { key, value, agent: o.agent });
+    out(o.json, r, () => `已修改 ${r.key}：${formatChangeValue(r.old)} → ${formatChangeValue(r.new)}`);
   });
 
 const service = program.command('service').description('背景服務：由系統排程每 5 分鐘執行 ilearn run');

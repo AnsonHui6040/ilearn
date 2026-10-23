@@ -8,7 +8,9 @@ import {
 } from '../cli/commands/query.js';
 import type { CliContext } from '../cli/context.js';
 import type { Config } from '../config/config.js';
+import { recentAgentChanges, type AgentChange } from '../agent/changes.js';
 import { reminderSent } from '../db/repo.js';
+import { summariesWrittenToday } from '../summaries/summaries.js';
 import { courseCode, slotLabel } from '../domain/schedule.js';
 import type { ScheduleSlot } from '../ilearn/courseInfo.js';
 import type { Rule } from '../rules/engine.js';
@@ -66,8 +68,12 @@ export interface TuiData {
   reminders: UpcomingReminder[];
   announcements: AnnouncementRow[];
   notices: string[];
+  /** 最近 7 日 agent 修改設定的紀錄，新的在前 */
+  agentChanges: AgentChange[];
   rules: Rule[];
   config: Config;
+  /** 今天已由 agent 寫入的摘要數 */
+  summariesToday: number;
   /** 背景服務狀態，由介面另外取得 */
   service?: ServiceStatus;
   /** 系統更新狀態，由介面另外取得 */
@@ -234,8 +240,10 @@ export function loadTuiData(ctx: CliContext): TuiData {
     reminders: reminders(ctx, now, from),
     announcements: announcements(ctx, from),
     notices: notices(ctx, status),
+    agentChanges: recentAgentChanges(ctx.root, now),
     rules: ctx.rules,
     config: ctx.config,
+    summariesToday: summariesWrittenToday(ctx),
   };
 }
 

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { getSyncState, listFiles, listItems, setCompletion, type StoredCourse, type StoredFile, type StoredItem } from '../../db/repo.js';
 import type { EventType, IlearnEvent } from '../../types.js';
+import { summaryTexts } from '../../summaries/summaries.js';
 import { toTaipeiIso } from '../../time.js';
 import { absPath, CliExit, readAccount, type CliContext } from '../context.js';
 import { readLastError, readProgress } from './state.js';
@@ -136,7 +137,7 @@ function findCourse(ctx: CliContext, id: string): StoredCourse {
   return c;
 }
 
-function fileRow(ctx: CliContext, f: StoredFile) {
+function fileRow(ctx: CliContext, f: StoredFile, summaries?: Map<string, string>) {
   return {
     id: f.upload_id,
     item_id: f.item_id,
@@ -146,6 +147,7 @@ function fileRow(ctx: CliContext, f: StoredFile) {
     status: f.status,
     local_path: absPath(ctx.root, f.local_path),
     link: f.link,
+    ...(summaries !== undefined ? { summary: summaries.get(`file:${f.upload_id}`) ?? null } : {}),
   };
 }
 
@@ -157,6 +159,7 @@ interface InfoSnapshot {
 export function courseCommand(ctx: CliContext, id: string) {
   const c = findCourse(ctx, id);
   const names = courseNames(ctx);
+  const summaries = summaryTexts(ctx.db);
   const now = ctx.now().getTime();
   const items = listItems(ctx.db, { course_id: id });
   const out = (kind: StoredItem['kind']): ReturnType<typeof publicItem>[] =>
@@ -186,9 +189,9 @@ export function courseCommand(ctx: CliContext, id: string) {
       .map((i) => ({ ...publicItem(i, names), not_started: i.start_at !== null && Date.parse(i.start_at) > now })),
     completed: assignments.filter((i) => i.completion !== 'pending').map((i) => publicItem(i, names)),
     exams: out('exam'),
-    announcements: announcements.map((i) => publicItem(i, names)),
+    announcements: announcements.map((i) => ({ ...publicItem(i, names), summary: summaries.get(i.id) ?? null })),
     materials: out('material'),
-    files: listFiles(ctx.db, { course_id: id }).map((f) => fileRow(ctx, f)),
+    files: listFiles(ctx.db, { course_id: id }).map((f) => fileRow(ctx, f, summaries)),
     surveys: out('survey'),
     videos: out('video'),
     grades,
@@ -199,10 +202,11 @@ export function courseCommand(ctx: CliContext, id: string) {
 
 export function announcementsCommand(ctx: CliContext, o: { category?: string; course?: string }) {
   const names = courseNames(ctx);
+  const summaries = summaryTexts(ctx.db);
   return listItems(ctx.db, { kind: 'announcement', ...(o.course !== undefined ? { course_id: o.course } : {}) })
     .filter((i) => o.category === undefined || (i.manual_categories ?? i.categories).includes(o.category))
     .sort(newestPosted)
-    .map((i) => publicItem(i, names));
+    .map((i) => ({ ...publicItem(i, names), summary: summaries.get(i.id) ?? null }));
 }
 
 export function gradesCommand(ctx: CliContext, o: { course?: string }) {

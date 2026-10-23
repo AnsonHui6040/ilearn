@@ -6,6 +6,18 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        Buffer: 'readonly',
+        console: 'readonly',
+        structuredClone: 'readonly',
+        Response: 'readonly',
+      },
+    },
+  },
+  {
     files: ['**/*.ts'],
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],

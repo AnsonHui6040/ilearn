@@ -3,3 +3,7 @@ node_modules/
 dist/
 coverage/
 .DS_Store
+
+# 裝置測試：帳密與執行紀錄
+scripts/device-test/credentials.local
+scripts/device-test/logs/

@@ -5,13 +5,16 @@ import { DEFAULT_CONFIG, saveConfig, type Config, type UpdateFrequency } from '.
 import { CliExit, reloadSettings, rulesPath, type CliContext } from '../cli/context.js';
 import { formatValidation, validateRules } from '../cli/commands/rules.js';
 import { listItems, setCompletion } from '../db/repo.js';
+import { renderFolderView } from '../folder/folder.js';
 import { DEFAULT_RULES, type Rule } from '../rules/engine.js';
 import { parseRulesYaml, stringifyRules } from '../rules/yaml.js';
 import { webhookUrlError } from '../events/dispatch.js';
 import { parseIsoDuration } from '../time.js';
 import type { Delivery } from '../types.js';
 import { displayName } from './data.js';
-import type { Change } from './state.js';
+import { SUMMARY_LABEL, type Change } from './state.js';
+
+export const PERMISSION_LABEL = { summaries: '寫入摘要', settings: '修改設定' } as const;
 
 export const OFFSET_CHOICES: string[] = ['P3D', 'P2D', 'P1D', 'PT12H', 'PT6H', 'PT3H', 'PT1H'];
 
@@ -56,6 +59,12 @@ export function previewChanges(ctx: CliContext, changes: Change[]): string[] {
       case 'courseRule':
         lines.push(`${courseName(ctx, c.courseId)}「${ruleName(ctx.rules, c.ruleId)}」：${onOff(c.enabled)}`);
         break;
+      case 'courseSummary':
+        lines.push(`${courseName(ctx, c.courseId)}「${SUMMARY_LABEL[c.summary]}」：${onOff(c.enabled)}`);
+        break;
+      case 'agentPermission':
+        lines.push(`允許 agent ${PERMISSION_LABEL[c.permission]}：${c.enabled ? '允許' : '不允許'}`);
+        break;
       case 'reset':
         lines.push('全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留');
         break;
@@ -72,7 +81,7 @@ function writeRules(ctx: CliContext, rules: Rule[]): void {
 }
 
 /** 刪除空的 rules 與課程物件。 */
-function prune(overrides: CourseOverrides, courseId: string): void {
+export function prune(overrides: CourseOverrides, courseId: string): void {
   const course = overrides[courseId];
   if (course === undefined) return;
   if (course.rules !== undefined) {
@@ -146,6 +155,21 @@ export function applyChanges(ctx: CliContext, changes: Change[]): { applied: num
         applied++;
         break;
       }
+      case 'courseSummary': {
+        const cur = cfg.summaries.courses[c.courseId] ?? { materials: false, announcements: false };
+        const next = { ...cur, [c.summary]: c.enabled };
+        // 兩種摘要都關閉時不留空項目，與設定精靈一致
+        if (next.materials || next.announcements) cfg.summaries.courses[c.courseId] = next;
+        else delete cfg.summaries.courses[c.courseId];
+        cfgDirty = true;
+        applied++;
+        break;
+      }
+      case 'agentPermission':
+        cfg.agent_permissions[c.permission] = c.enabled;
+        cfgDirty = true;
+        applied++;
+        break;
       case 'reset':
         cfg = { ...structuredClone(DEFAULT_CONFIG), environment: cfg.environment, password_saved: cfg.password_saved };
         rules = structuredClone(DEFAULT_RULES);
@@ -160,6 +184,8 @@ export function applyChanges(ctx: CliContext, changes: Change[]): { applied: num
   if (cfgDirty) saveConfig(cfg, ctx.root);
   if (rulesDirty) writeRules(ctx, rules);
   reloadSettings(ctx);
+  // 介面內不輸出到終端，失敗時靜默略過
+  renderFolderView(ctx, () => undefined);
   return { applied, skipped };
 }
 
@@ -285,4 +311,5 @@ export function applyInterfaces(ctx: CliContext, folder: boolean): void {
   updateConfig(ctx, (cfg) => {
     cfg.interfaces = { terminal: true, folder, web: false, desktop: false };
   });
+  renderFolderView(ctx, () => undefined);
 }

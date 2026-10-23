@@ -2,8 +2,9 @@ import type { courseCommand } from '../cli/commands/query.js';
 import type { Rule } from '../rules/engine.js';
 import { displayName, type CourseRow, type TuiData } from './data.js';
 import { TWO_PANE_COLS, type Style } from './frame.js';
+import { AGENT_CHANGE_DAYS, AGENT_CHANGE_SHOWN, formatAgentChange } from '../agent/changes.js';
 import { toTaipeiIso } from '../time.js';
-import { changeKey, type Change, type Row, type TuiState, type View } from './state.js';
+import { changeKey, SUMMARY_LABEL, type Change, type Row, type TuiState, type View } from './state.js';
 import { fit, strWidth, wrap } from './text.js';
 
 type Detail = ReturnType<typeof courseCommand>;
@@ -45,7 +46,7 @@ const box = (on: boolean): string => (on ? '[x]' : '[ ]');
 /** 剔選後的結果：目前狀態與待確認變更互斥。 */
 const willBe = (s: TuiState, current: boolean, change: Change): boolean => current !== s.ticked.has(changeKey(change));
 
-function ruleName(rules: Rule[], id: string): string {
+export function ruleName(rules: Rule[], id: string): string {
   if (id === 'general') return '一般通知';
   return rules.find((r) => r.id === id)?.name ?? id;
 }
@@ -56,6 +57,9 @@ function homePage(s: TuiState, d: TuiData): Page {
   const rows: Row[] = [];
   if (d.update?.available) {
     rows.push(head(`有新版本 ${d.update.latest}（目前 ${d.update.current}），可在系統設定 > 系統更新 更新`), { text: '' });
+  }
+  if (d.agentChanges.length > 0) {
+    rows.push(head(`agent 最近 ${AGENT_CHANGE_DAYS} 日修改了 ${d.agentChanges.length} 項設定，詳情見 3 提醒`), { text: '' });
   }
   rows.push(head(`需要處理  未完成 ${d.tasks.tasks.length}`));
   const row = (t: TuiData['home']['overdue'][number], style?: Style): Row => {
@@ -153,6 +157,12 @@ function itemDetail(it: Item, course: string, extra: string[] = []): View {
   };
 }
 
+/** 已有摘要時，在項目下方以淡色換行顯示。 */
+function summaryRows(summary: string | null | undefined, width: number): Row[] {
+  if (!summary) return [];
+  return paragraphs(summary, Math.max(10, width - 8)).map((l) => dim(`      ${l}`));
+}
+
 function sectionRows(s: TuiState, d: TuiData, x: Detail, section: number, width: number): Row[] {
   const course = displayName(x.course.name);
   const rows: Row[] = [];
@@ -198,13 +208,19 @@ function sectionRows(s: TuiState, d: TuiData, x: Detail, section: number, width:
       return x.announcements.flatMap((a): Row[] => [
         { text: `  ${a.title}`, key: a.id, activate: { view: itemDetail(a, course, [`發布：${short(a.posted_at)}`]) } },
         dim(`      ${short(a.posted_at)}  ${a.categories.map((c) => ruleName(d.rules, c)).join('、')}`),
+        ...summaryRows(a.summary, width),
       ]);
     case 4:
       if (!x.files.length) return empty();
-      return x.files.map((f): Row => {
-        if (f.status === 'done' && f.local_path) return { text: `  ${f.name}`, key: `file:${f.id}`, activate: { open: { kind: 'file', path: f.local_path } } };
+      return x.files.flatMap((f): Row[] => {
+        if (f.status === 'done' && f.local_path) {
+          return [{ text: `  ${f.name}`, key: `file:${f.id}`, activate: { open: { kind: 'file', path: f.local_path } } }, ...summaryRows(f.summary, width)];
+        }
         const note = f.status === 'skipped' ? '老師關閉下載' : f.status === 'failed' ? '下載失敗' : f.status === 'link' ? '外部連結' : '尚未下載';
-        return { text: `  ${f.name}  ${note}`, key: `file:${f.id}`, style: 'dim', ...(f.link ? { activate: { open: { kind: 'url' as const, url: f.link } } } : {}) };
+        return [
+          { text: `  ${f.name}  ${note}`, key: `file:${f.id}`, style: 'dim', ...(f.link ? { activate: { open: { kind: 'url' as const, url: f.link } } } : {}) },
+          ...summaryRows(f.summary, width),
+        ];
       });
     case 5:
       if (!x.videos.length) return empty();
@@ -254,6 +270,14 @@ function remindersPage(d: TuiData): Page {
   const rows: Row[] = [head('系統')];
   if (d.notices.length === 0) rows.push(dim('  沒有系統提醒'));
   rows.push(...d.notices.map((n, i): Row => ({ text: `  ${n}`, key: `notice:${i}`, style: 'red' })));
+  if (d.agentChanges.length > 0) {
+    rows.push(
+      { text: '' },
+      head(`agent 最近 ${AGENT_CHANGE_DAYS} 日修改的設定 ${d.agentChanges.length}`),
+      ...d.agentChanges.slice(0, AGENT_CHANGE_SHOWN).map((c, i): Row => ({ text: `  ${formatAgentChange(c)}`, key: `agentchg:${i}` })),
+    );
+    if (d.agentChanges.length > AGENT_CHANGE_SHOWN) rows.push(dim(`  只列出最新 ${AGENT_CHANGE_SHOWN} 項，完整紀錄在 data/agent-changes.jsonl`));
+  }
   rows.push({ text: '' }, head(`即將發出的截止提醒 ${d.reminders.length}`));
   if (d.reminders.length === 0) rows.push(dim('  今天之後沒有提醒'));
   rows.push(
@@ -315,16 +339,27 @@ function courseSettingsPage(s: TuiState, d: TuiData): Page {
     },
     { text: '' },
     head('摘要'),
-    dim('  教材檔案摘要、老師公告摘要（Phase 6 開放）'),
+  );
+  for (const kind of ['materials', 'announcements'] as const) {
+    const enabled = d.config.summaries.courses[c.id]?.[kind] ?? false;
+    const tick: Change = { kind: 'courseSummary', courseId: c.id, summary: kind, enabled: !enabled };
+    right.push({
+      text: `  ${box(willBe(s, enabled, tick))} ${SUMMARY_LABEL[kind]}`,
+      key: `csum:${kind}`,
+      tick,
+      activate: { confirm: [tick] },
+    });
+  }
+  right.push(
     { text: '' },
-    dim('  Space 剔選規則  Enter 修改等級或提醒時間'),
+    dim('  Space 剔選規則或摘要  Enter 修改等級或提醒時間'),
   );
   return { panes: [left, right], leftWidth: 34, help: HELP.twoPane };
 }
 
 /* ---------- 5 系統設定 ---------- */
 
-export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', '背景服務', '系統更新', 'Reset', '完全移除'] as const;
+export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '摘要', 'agent 權限', '帳號', '背景服務', '系統更新', 'Reset', '完全移除'] as const;
 
 function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
   const st = d.status;
@@ -378,6 +413,36 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         { text: '  新增規則', key: 'new-rule', activate: { prompt: { kind: 'editRule', ruleId: null } } },
         { text: '  以編輯器修改全部規則（rules.yaml）', key: 'edit', activate: { editRules: true } },
         dim('  Space 剔選啟用或停用，再按 Enter 確認；沒有剔選時 Enter 修改該規則的關鍵詞'),
+      ];
+    }
+    case '摘要': {
+      const sm = d.config.summaries;
+      return [
+        head('摘要'),
+        dim('  agent 讀取待摘要的公告與教材，寫好後用 ilearn summaries write 或 MCP 寫回；本工具不會呼叫任何 AI'),
+        { text: '' },
+        { text: `  每日上限：${sm.daily_limit} 則` },
+        { text: `  今天已寫入：${d.summariesToday} 則` },
+        { text: '' },
+        dim('  各科是否啟用，在「課程設定」分頁；是否允許 agent 寫入，在「agent 權限」'),
+      ];
+    }
+    case 'agent 權限': {
+      const ap = d.config.agent_permissions;
+      const perm = (permission: 'summaries' | 'settings', label: string): Row => {
+        const tick: Change = { kind: 'agentPermission', permission, enabled: !ap[permission] };
+        return { text: `  ${box(willBe(s, ap[permission], tick))} ${label}`, key: `agent-perm:${permission}`, tick, activate: { confirm: [tick] } };
+      };
+      return [
+        head('agent 權限'),
+        dim('  預設都不允許；只有你能在這裡或 ilearn setup 改變，agent 不能自己開啟'),
+        { text: '' },
+        perm('summaries', '允許 agent 寫入摘要'),
+        perm('settings', '允許 agent 修改設定'),
+        { text: '' },
+        dim('  可修改的設定：夜間時段、截止提醒、通知規則與關鍵詞、每科設定、摘要開關與每日上限、資料夾檢視、更新頻率'),
+        dim('  帳號、密碼、推送方式、背景服務、更新與移除一律不開放'),
+        dim('  agent 每次修改都會記錄，並顯示在首頁與「提醒」分頁'),
       ];
     }
     case '帳號':

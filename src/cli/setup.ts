@@ -7,6 +7,7 @@ import { writeSecureFile } from '../config/paths.js';
 import { getSyncState, listFiles, listItems } from '../db/repo.js';
 import { AuthError } from '../ilearn/auth.js';
 import { webhookUrlError } from '../events/dispatch.js';
+import { renderFolderView } from '../folder/folder.js';
 import { stringifyRules } from '../rules/yaml.js';
 import { defaultServiceDeps, defaultServiceSpec, installService, serviceStatus, type ServiceStatus } from '../service/service.js';
 import type { SyncProgress, SyncReport } from '../sync/sync.js';
@@ -192,7 +193,7 @@ const say = (s = ''): void => void process.stdout.write(`${s}\n`);
 
 /* ---------- 互動流程 ---------- */
 
-type Prompts = typeof import('@inquirer/prompts');
+export type Prompts = typeof import('@inquirer/prompts');
 
 const TOTAL_STEPS = 8;
 const header = (n: number, title: string): void => say(stepHeader(n, TOTAL_STEPS, title));
@@ -266,8 +267,9 @@ function isPromptExit(e: unknown): boolean {
   return e instanceof Error && e.name === 'ExitPromptError';
 }
 
-export async function runSetup(ctx: CliContext): Promise<void> {
-  const p = await import('@inquirer/prompts');
+/** prompts 可由呼叫端注入（測試與裝置測試腳本用）；省略時使用真正的互動式提問。 */
+export async function runSetup(ctx: CliContext, prompts?: Prompts): Promise<void> {
+  const p = prompts ?? (await import('@inquirer/prompts'));
   const hadConfig = existsSync(join(ctx.root, 'config.yaml'));
   const d = setupDefaults(hadConfig ? ctx.config : null, detectEnvironment(process.env));
   const t = setupTracker(ctx.root);
@@ -382,6 +384,8 @@ async function setupRest(ctx: CliContext, p: Prompts, d: SetupDefaults, t: Setup
     }
 
     await askSummaries(ctx, p, d, t);
+    await confirmSettings(ctx, p, t);
+    renderFolderView(ctx);
 
     // 完成摘要
     if (report) say(formatSummary(report, summaryExtras(ctx.db, ctx.now())));
@@ -391,7 +395,6 @@ async function setupRest(ctx: CliContext, p: Prompts, d: SetupDefaults, t: Setup
       install: () => installService(defaultServiceDeps(), defaultServiceSpec(ctx.root)),
     });
     say('要把現有事項推送給 agent，請執行 ilearn reload。');
-    t.finish();
   } catch (e) {
     ac.abort();
     await settled;
@@ -585,41 +588,142 @@ function applySummaries(
 
 const countText = (n: number): string => (n === 0 ? '沒有選擇任何課程' : `${n} 門課程`);
 
-async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
-  if (t.skip(7) && t.skip(8)) {
-    skipped(7, '教材檔案摘要');
-    skipped(8, '老師公告摘要');
-    return;
-  }
-  const courses = ctx.db
+const SUMMARY_TITLES = { 7: '教材檔案摘要', 8: '老師公告摘要' } as const;
+
+function latestCourses(ctx: CliContext): { id: string; name: string }[] {
+  return ctx.db
     .prepare('SELECT id, name FROM courses WHERE semester = (SELECT MAX(semester) FROM courses) ORDER BY name')
     .all() as unknown as { id: string; name: string }[];
+}
+
+/** 權限的簡短說明，確認畫面與儲存提示共用。 */
+export function permissionsText(a: Config['agent_permissions']): string {
+  const on = [a.summaries && '寫入摘要', a.settings && '修改設定'].filter((x): x is string => x !== false);
+  return on.length === 0 ? '都不允許' : on.join('、');
+}
+
+/** 第 8 步最後一題：一次勾選要允許 agent 做哪些事。每次都問，預設為目前已儲存的選擇。 */
+async function askAgentPermissions(ctx: CliContext, p: Prompts): Promise<void> {
+  const cur = ctx.config.agent_permissions;
+  const picked = new Set(
+    await p.checkbox({
+      message: '允許 agent：',
+      choices: [
+        { name: '寫入摘要（透過 ilearn summaries write 或 MCP）', value: 'summaries', checked: cur.summaries },
+        { name: '修改設定（通知、提醒、規則與關鍵詞、每科設定、摘要開關、資料夾檢視、更新頻率）', value: 'settings', checked: cur.settings },
+      ],
+      theme: checkboxTheme,
+    }),
+  );
+  ctx.config.agent_permissions = { summaries: picked.has('summaries'), settings: picked.has('settings') };
+  saveConfig(ctx.config, ctx.root);
+  saved(`agent 權限：${permissionsText(ctx.config.agent_permissions)}`);
+}
+
+/** 第 7 或第 8 步其中一步；另一步的選擇沿用目前已儲存的設定。 */
+async function askSummaryStep(
+  ctx: CliContext,
+  p: Prompts,
+  d: SetupDefaults,
+  t: SetupTracker,
+  step: 7 | 8,
+): Promise<void> {
+  header(step, SUMMARY_TITLES[step]);
+  const courses = latestCourses(ctx);
   if (courses.length === 0) {
-    header(7, '教材檔案摘要');
     ok('目前沒有課程資料，略過');
-    header(8, '老師公告摘要');
-    ok('目前沒有課程資料，略過');
+    // agent 權限與課程無關，第 8 步一定要問
+    if (step === 8) {
+      await askAgentPermissions(ctx, p);
+      t.done(8);
+    }
     return;
   }
-  const pick = async (message: string, prior: string[]): Promise<Set<string>> => {
-    const was = new Set(prior);
-    return new Set(
-      await p.checkbox({
-        message,
-        choices: courses.map((c) => ({ name: c.name, value: c.id, checked: was.has(c.id) })),
-        theme: checkboxTheme,
-      }),
-    );
-  };
-  header(7, '教材檔案摘要');
-  const materials = await pick('啟用「教材檔案摘要」的課程（沒有剔選的課程只顯示標題）', d.materials);
-  applySummaries(ctx, courses, materials, new Set(d.announcements));
-  saved(`教材檔案摘要：${countText(materials.size)}`);
+  const was = new Set(step === 7 ? d.materials : d.announcements);
+  const chosen = new Set(
+    await p.checkbox({
+      message: `啟用「${SUMMARY_TITLES[step]}」的課程（沒有剔選的課程只顯示標題）`,
+      choices: courses.map((c) => ({ name: c.name, value: c.id, checked: was.has(c.id) })),
+      theme: checkboxTheme,
+    }),
+  );
+  if (step === 7) applySummaries(ctx, courses, chosen, new Set(d.announcements));
+  else applySummaries(ctx, courses, new Set(d.materials), chosen);
+  saved(`${SUMMARY_TITLES[step]}：${countText(chosen.size)}`);
+  if (step === 8) await askAgentPermissions(ctx, p);
+  t.done(step);
+}
 
-  header(8, '老師公告摘要');
-  const announcements = await pick('啟用「老師公告摘要」的課程（沒有剔選的課程只顯示標題）', d.announcements);
-  applySummaries(ctx, courses, materials, announcements);
-  saved(`老師公告摘要：${countText(announcements.size)}`);
-  t.done(7);
-  t.done(8);
+export async function askSummaries(ctx: CliContext, p: Prompts, d: SetupDefaults, t: SetupTracker): Promise<void> {
+  if (t.skip(7) && t.skip(8)) {
+    skipped(7, SUMMARY_TITLES[7]);
+    skipped(8, SUMMARY_TITLES[8]);
+    return;
+  }
+  await askSummaryStep(ctx, p, d, t, 7);
+  // 第 8 步的預設值要反映剛儲存的第 7 步
+  await askSummaryStep(ctx, p, setupDefaults(ctx.config, d.environment), t, 8);
+}
+
+/* ---------- 確認畫面 ---------- */
+
+/** 確認畫面可以回頭修改的步驟；第 2、3 步涉及帳密，不在這裡處理。 */
+const EDITABLE_STEPS = [
+  [1, '執行環境'],
+  [4, '要啟用的介面'],
+  [5, '推送方式'],
+  [6, '通知規則'],
+  [7, SUMMARY_TITLES[7]],
+  [8, SUMMARY_TITLES[8]],
+] as const;
+
+/** 目前所有答案，一步一行。不含學號、密碼等帳號資料。 */
+export function formatConfirmation(ctx: CliContext): string {
+  const cfg = ctx.config;
+  const ids = new Set(latestCourses(ctx).map((c) => c.id));
+  const count = (key: 'materials' | 'announcements'): number =>
+    Object.entries(cfg.summaries.courses).filter(([id, v]) => v[key] && (ids.size === 0 || ids.has(id))).length;
+  const on = ctx.rules.filter((r) => r.enabled).length;
+  return [
+    `1 執行環境：${cfg.environment === 'vps' ? 'VPS 或雲端主機' : '本機桌面'}`,
+    '2 登入 iLearn：已登入',
+    `3 保存密碼：${cfg.password_saved ? '已保存' : '只保存 session'}`,
+    `4 要啟用的介面：${cfg.interfaces.folder ? '終端機、資料夾（Markdown 檢視）' : '終端機'}`,
+    `5 推送方式：${deliverySummary(cfg.delivery)}`,
+    `6 通知規則：啟用 ${on} 條，停用 ${ctx.rules.length - on} 條`,
+    `7 ${SUMMARY_TITLES[7]}：${countText(count('materials'))}`,
+    `8 ${SUMMARY_TITLES[8]}：${countText(count('announcements'))}；agent 權限：${permissionsText(cfg.agent_permissions)}`,
+  ].join('\n');
+}
+
+/** 第 8 步之後的最後確認；選「確認完成」才算設定完成。中斷時各步已儲存且標記完成，下次會直接回到這裡。 */
+export async function confirmSettings(ctx: CliContext, p: Prompts, t: SetupTracker): Promise<void> {
+  for (;;) {
+    say(`${RULE}\n確認設定\n${RULE}`);
+    say(formatConfirmation(ctx));
+    say();
+    say('要重新登入或更改保存密碼，請執行 ilearn login，或在 ilearn ui 的「系統設定 > 帳號」操作。');
+    say();
+    const choice = await p.select({
+      message: '設定是否正確',
+      choices: [
+        { name: '確認完成', value: 0 },
+        ...EDITABLE_STEPS.map(([n, title]) => ({ name: `修改第 ${n} 步：${title}`, value: n })),
+      ],
+      default: 0,
+      theme: selectTheme,
+    });
+    if (choice === 0) {
+      t.finish();
+      return;
+    }
+    const d = setupDefaults(ctx.config, detectEnvironment(process.env));
+    if (choice === 1) await askEnvironment(ctx, p, d, t);
+    else if (choice === 4) await askInterfaces(ctx, p, d, t);
+    else if (choice === 5) await askDelivery(ctx, p, t);
+    else if (choice === 6) {
+      await askRules(ctx, p);
+      t.done(6);
+    } else await askSummaryStep(ctx, p, d, t, choice === 7 ? 7 : 8);
+  }
 }

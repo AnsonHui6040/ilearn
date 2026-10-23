@@ -171,7 +171,7 @@ describe('5 系統設定', () => {
   it('never shows the hook command or the webhook address', () => {
     const ctx = seeded();
     ctx.config.delivery = { hook: { enabled: true, command: 'secret-hook-cmd' }, webhook: { enabled: true, url: 'http://127.0.0.1:9/secret-path' } };
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= 13; i++) {
       const out = text(show(ctx, { ...onTab(5), cursor: [i, 0] }, 100));
       expect(out).not.toContain('secret-hook-cmd');
       expect(out).not.toContain('secret-path');
@@ -201,8 +201,8 @@ describe('5 系統設定 actions', () => {
     expect(acts(4)).toContainEqual({ prompt: { kind: 'delivery' } });
     expect(acts(7)).toContainEqual({ prompt: { kind: 'editRule', ruleId: 'exam' } });
     expect(acts(7)).toContainEqual({ prompt: { kind: 'editRule', ruleId: null } });
-    expect(acts(8)).toContainEqual({ run: 'login' });
-    expect(acts(8)).toContainEqual({ run: 'logout' });
+    expect(acts(10)).toContainEqual({ run: 'login' });
+    expect(acts(10)).toContainEqual({ run: 'logout' });
   });
 
   it('enter on a left item without its own action moves into the right pane', () => {
@@ -216,7 +216,7 @@ describe('5 系統設定 actions', () => {
     const ctx = seeded();
     const at = (installed: boolean) => {
       const d = { ...loadTuiData(ctx), service: { installed, method: installed ? ('launchd' as const) : null, detail: installed ? '已安裝（LaunchAgent）' : '未安裝' } };
-      return (buildPage({ ...onTab(5), cursor: [9, 0] }, d, 100, sources(ctx)).panes[1] ?? []);
+      return (buildPage({ ...onTab(5), cursor: [11, 0] }, d, 100, sources(ctx)).panes[1] ?? []);
     };
     expect(at(false).map((r) => r.text).join('\n')).toContain('未安裝');
     expect(at(false).flatMap((r) => (r.activate ? [r.activate] : []))).toContainEqual({ run: 'serviceInstall' });
@@ -224,25 +224,25 @@ describe('5 系統設定 actions', () => {
   });
 
   it('shows the version and offers update actions', () => {
-    const text = rows(10).map((r) => r.text).join('\n');
+    const text = rows(12).map((r) => r.text).join('\n');
     expect(text).toContain('目前版本：');
     expect(text).toContain('自動檢查：每天');
     expect(text).toContain('上次檢查：尚未檢查');
-    expect(acts(10)).toContainEqual({ prompt: { kind: 'updateFrequency' } });
-    expect(acts(10)).toContainEqual({ run: 'updateCheck' });
-    expect(acts(10)).toContainEqual({ run: 'updateApply' });
+    expect(acts(12)).toContainEqual({ prompt: { kind: 'updateFrequency' } });
+    expect(acts(12)).toContainEqual({ run: 'updateCheck' });
+    expect(acts(12)).toContainEqual({ run: 'updateApply' });
   });
 
   it('warns when the service runs another copy and offers to reinstall', () => {
     const ctx = seeded();
     const d = { ...loadTuiData(ctx), service: { installed: true, method: 'launchd' as const, detail: '已安裝（LaunchAgent），但執行的是另一份程式：/Users/a/thu-ilearn/dist/cli/index.js', target: '/Users/a/thu-ilearn/dist/cli/index.js', mismatch: true } };
-    const right = buildPage({ ...onTab(5), cursor: [9, 0] }, d, 100, sources(ctx)).panes[1] ?? [];
+    const right = buildPage({ ...onTab(5), cursor: [11, 0] }, d, 100, sources(ctx)).panes[1] ?? [];
     expect(right.map((r) => r.text).join('\n')).toContain('執行的是另一份程式');
     expect(right.find((r) => r.text.includes('重新安裝背景服務'))?.activate).toEqual({ run: 'serviceInstall' });
   });
 
   it('offers complete removal as the last item', () => {
-    expect(acts(12)).toContainEqual({ run: 'uninstallAll' });
+    expect(acts(14)).toContainEqual({ run: 'uninstallAll' });
   });
 
   it('shows whether the folder view is on', () => {
