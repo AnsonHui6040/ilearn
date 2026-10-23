@@ -45,7 +45,7 @@ const box = (on: boolean): string => (on ? '[x]' : '[ ]');
 /** 剔選後的結果：目前狀態與待確認變更互斥。 */
 const willBe = (s: TuiState, current: boolean, change: Change): boolean => current !== s.ticked.has(changeKey(change));
 
-function ruleName(rules: Rule[], id: string): string {
+export function ruleName(rules: Rule[], id: string): string {
   if (id === 'general') return '一般通知';
   return rules.find((r) => r.id === id)?.name ?? id;
 }
