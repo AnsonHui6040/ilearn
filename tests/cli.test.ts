@@ -28,6 +28,8 @@ import {
   askRemaining,
   askRules,
   askService,
+  confirmSettings,
+  formatConfirmation,
   DEFAULT_WEBHOOK_URL,
   deliverySummary,
   detectEnvironment,
@@ -825,5 +827,114 @@ describe('setup resumes after an interruption', () => {
     const text = out.mock.calls.map((c) => String(c[0])).join('');
     out.mockRestore();
     expect(text).toContain('已完成，略過');
+  });
+});
+
+describe('setup confirmation screen', () => {
+  const quiet = () => vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  /** 依序回答 select；checkbox 與 input 記錄被問到的訊息。 */
+  function fake(selects: number[], checks: string[][] = []) {
+    const asked = { select: [] as { choices: { name: string; value: number }[] }[], checkbox: [] as string[], input: [] as string[] };
+    const p = {
+      select: ((o: { choices: { name: string; value: number }[] }) => {
+        asked.select.push(o);
+        return Promise.resolve(selects.shift() ?? 0);
+      }) as never,
+      checkbox: ((o: { message: string }) => {
+        asked.checkbox.push(o.message);
+        return Promise.resolve(checks.shift() ?? []);
+      }) as never,
+      input: ((o: { message: string }) => (asked.input.push(o.message), Promise.resolve('my-agent notify'))) as never,
+      confirm: (() => Promise.resolve(false)) as never,
+    } as never;
+    return { asked, p };
+  }
+  const progress = (root: string) => JSON.parse(readFileSync(join(root, 'data', 'setup-progress.json'), 'utf8')) as { done: number[]; finished: boolean };
+
+  it('lists all eight answers and never prints the student ID', async () => {
+    const { ctx } = await seeded();
+    ctx.username = '41234567';
+    const text = formatConfirmation(ctx);
+    expect(text.split('\n')).toHaveLength(8);
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) expect(text).toContain(`${n} `);
+    expect(text).toContain('2 登入 iLearn：已登入');
+    expect(text).toContain('7 教材檔案摘要：沒有選擇任何課程');
+    expect(text).not.toContain('41234567');
+    const out = quiet();
+    const f = fake([0]);
+    await confirmSettings(ctx, f.p, setupTracker(mkdtempSync(join(tmpdir(), 'ilearn-conf-'))));
+    const printed = out.mock.calls.map((c) => String(c[0])).join('');
+    out.mockRestore();
+    expect(printed).toContain('確認設定');
+    expect(printed).not.toContain('41234567');
+    expect(printed).toContain('要重新登入或更改保存密碼，請執行 ilearn login，或在 ilearn ui 的「系統設定 > 帳號」操作。');
+    const names = f.asked.select[0]?.choices.map((c) => c.name);
+    expect(names).toEqual(['確認完成', ...[[1, '執行環境'], [4, '要啟用的介面'], [5, '推送方式'], [6, '通知規則'], [7, '教材檔案摘要'], [8, '老師公告摘要']].map(([n, t]) => `修改第 ${n} 步：${t}`)]);
+  });
+
+  it('re-asks only step 5 and leaves other answers unchanged', async () => {
+    const { ctx, root } = await seeded();
+    ctx.config.environment = 'vps';
+    ctx.config.interfaces.folder = true;
+    const t = setupTracker(root);
+    const out = quiet();
+    const f = fake([5, 0], [['outbox', 'hook']]);
+    await confirmSettings(ctx, f.p, t);
+    out.mockRestore();
+    expect(f.asked.checkbox).toEqual(['推送方式']);
+    expect(f.asked.input).toEqual(['每則推送事件要執行的指令']);
+    expect(f.asked.select).toHaveLength(2);
+    expect(ctx.config.delivery.hook).toEqual({ enabled: true, command: 'my-agent notify' });
+    expect(ctx.config.environment).toBe('vps');
+    expect(ctx.config.interfaces.folder).toBe(true);
+    expect(formatConfirmation(ctx)).toContain('本機指令 hook（my-agent notify）');
+  });
+
+  it('modifying step 7 does not ask step 8', async () => {
+    const { ctx, root } = await seeded();
+    const id = (ctx.db.prepare('SELECT id FROM courses LIMIT 1').get() as { id: string }).id;
+    const out = quiet();
+    const f = fake([7, 0], [[id]]);
+    await confirmSettings(ctx, f.p, setupTracker(root));
+    out.mockRestore();
+    expect(f.asked.checkbox).toEqual(['啟用「教材檔案摘要」的課程（沒有剔選的課程只顯示標題）']);
+    expect(ctx.config.summaries.courses[id]).toEqual({ materials: true, announcements: false });
+    expect(formatConfirmation(ctx)).toContain('7 教材檔案摘要：1 門課程');
+    expect(formatConfirmation(ctx)).toContain('8 老師公告摘要：沒有選擇任何課程');
+  });
+
+  it('calls finish only after the user confirms', async () => {
+    const { ctx, root } = await seeded();
+    const t = setupTracker(root);
+    t.done(1);
+    const out = quiet();
+    await confirmSettings(ctx, fake([1, 0]).p, t);
+    out.mockRestore();
+    expect(progress(root).finished).toBe(true);
+    const root2 = mkdtempSync(join(tmpdir(), 'ilearn-conf-'));
+    const t2 = setupTracker(root2);
+    t2.done(1);
+    const out2 = quiet();
+    const p = { select: (() => Promise.reject(Object.assign(new Error('x'), { name: 'ExitPromptError' }))) as never } as never;
+    await expect(confirmSettings(ctx, p, t2)).rejects.toThrow('x');
+    out2.mockRestore();
+    expect(progress(root2).finished).toBe(false);
+  });
+
+  it('an interrupted run with all steps done resumes straight into the confirmation screen', async () => {
+    const { ctx, root } = await seeded();
+    const first = setupTracker(root);
+    for (let n = 1; n <= 8; n++) first.done(n);
+    const resumed = setupTracker(root);
+    expect(resumed.resuming).toBe(true);
+    for (let n = 1; n <= 8; n++) expect(resumed.skip(n)).toBe(true);
+    const out = quiet();
+    const never = () => Promise.reject(new Error('should not ask'));
+    const f = fake([0]);
+    await askRemaining(ctx, { checkbox: never, input: never, confirm: never, select: never } as never, setupDefaults(ctx.config, 'desktop'), resumed);
+    await confirmSettings(ctx, f.p, resumed);
+    out.mockRestore();
+    expect(f.asked.select).toHaveLength(1);
+    expect(progress(root).finished).toBe(true);
   });
 });
