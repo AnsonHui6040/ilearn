@@ -79,7 +79,7 @@
 | 訊息提到每日上限 | 今天停止寫摘要 |
 | 訊息提到不能修改、不在清單或值無效 | 停止，把訊息轉告使用者 |
 | 其他 exit code 1 | 把標準錯誤的訊息轉告使用者，不要自己修改檔案修復 |
-| 找不到 `ilearn` 指令 | 你的執行環境可能用另一套 Node 或 PATH（桌面版 agent 常見）。透過使用者的登入 shell 查詢 Node 與 npm root：macOS `/bin/zsh -lic 'command -v node; npm root -g'`、Linux `bash -lic 'command -v node; npm root -g'`；之後一律用 `"<node>" "<npm root>/thu-ilearn/dist/cli/index.js" <參數>` 執行。仍找不到就請使用者處理，不要自己安裝 Node |
+| 找不到 `ilearn` 指令 | 你的執行環境可能用另一套 Node 或 PATH（桌面版 agent 常見）。透過使用者的登入 shell 查詢 Node 與 npm root：macOS `env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'command -v node; npm root -g'`、Linux 把 `/bin/zsh` 換成 `bash`（`env -i` 讓查詢不受你自己程式的 PATH 影響；查到的 Node 在你自己程式的資料夾內時，代表不是使用者的 Node）；之後一律用 `"<node>" "<npm root>/thu-ilearn/dist/cli/index.js" <參數>` 執行。仍找不到就請使用者處理，不要自己安裝 Node |
 | 讀寫 `~/.thu-ilearn` 時權限被拒（沙盒） | 把錯誤原文告訴使用者，由他調整你的權限；不要改用其他方法繞過 |
 
 ## 使用原則

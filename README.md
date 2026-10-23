@@ -56,13 +56,13 @@ ilearn service status
 請幫我在這台電腦安裝 thu-ilearn（東海大學 iLearn 同步工具，原始碼：https://github.com/AnsonHui6040/ilearn ）。
 
 1. 找出我自己的 Node。你的執行環境可能和我平常用的終端不同（桌面版 agent 常內建自己的 Node 與 PATH），所以要透過我的登入 shell 查詢，不要直接執行 node 或 npm。依系統執行其中一行：
-   - macOS：/bin/zsh -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
-   - Linux：bash -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
    - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); "NODE=$((Get-Command node).Source)"; "NODE_VERSION=$(node -v)"; "NPM_ROOT=$(npm root -g)"
-   記下 NODE 與 NPM_ROOT 兩個絕對路徑。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
+   開頭的 env -i 會清掉你自己程式的環境變數，讓登入 shell 只依我的設定找 Node，不要省略。記下 NODE 與 NPM_ROOT 兩個絕對路徑。如果 NODE 位在你自己程式的資料夾（例如路徑含 codex、claude、resources/node-runtime 或 .app/Contents），表示查到的是你內建的 Node，不是我的：不要安裝，停下來把結果告訴我。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
 2. 如果 NPM_ROOT 底下沒有 thu-ilearn 資料夾，用同一個方式安裝：
-   - macOS：/bin/zsh -lic 'npm install -g thu-ilearn'
-   - Linux：bash -lic 'npm install -g thu-ilearn'
+   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
+   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
    - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
    出現權限錯誤（EACCES）不要使用 sudo，把錯誤訊息告訴我。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
 3. 之後執行 ilearn 一律用這個格式（下文寫「ilearn」的地方都照這樣換）：
@@ -91,13 +91,13 @@ ilearn service status
 
 開始前：
 1. 找出我自己的 Node。你的執行環境可能和我平常用的終端不同（桌面版 agent 常內建自己的 Node 與 PATH），所以要透過我的登入 shell 查詢，不要直接執行 node 或 npm。依系統執行其中一行：
-   - macOS：/bin/zsh -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
-   - Linux：bash -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
+   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'echo "NODE=$(command -v node)"; echo "NODE_VERSION=$(node -v)"; echo "NPM_ROOT=$(npm root -g)"'
    - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); "NODE=$((Get-Command node).Source)"; "NODE_VERSION=$(node -v)"; "NPM_ROOT=$(npm root -g)"
-   記下 NODE 與 NPM_ROOT 兩個絕對路徑。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
+   開頭的 env -i 會清掉你自己程式的環境變數，讓登入 shell 只依我的設定找 Node，不要省略。記下 NODE 與 NPM_ROOT 兩個絕對路徑。如果 NODE 位在你自己程式的資料夾（例如路徑含 codex、claude、resources/node-runtime 或 .app/Contents），表示查到的是你內建的 Node，不是我的：不要安裝，停下來把結果告訴我。如果我平常用別的 shell（例如 fish），改用那個 shell。NODE 是空的，或 NODE_VERSION 低於 22.13：停下來，請我自己安裝 Node.js 22.13 以上（https://nodejs.org ，macOS 也可以用 brew install node），不要自行安裝或更換 Node。
 2. 如果 NPM_ROOT 底下沒有 thu-ilearn 資料夾（還沒安裝），用同一個方式安裝：
-   - macOS：/bin/zsh -lic 'npm install -g thu-ilearn'
-   - Linux：bash -lic 'npm install -g thu-ilearn'
+   - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
+   - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
    - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
    出現權限錯誤（EACCES）不要使用 sudo，把錯誤訊息告訴我。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
    剛完成安裝時，停下來請我自己在終端執行 ilearn setup（會要求學號與密碼，你不可以代為輸入或讀取），等我回覆「設定完成」再繼續。
