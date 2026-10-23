@@ -15,7 +15,7 @@
 ## 發布前必做
 
 - [x] 合併 PR #11，`main` 上 `npm test`（452 項）、typecheck、lint、build 全部通過
-- [ ] 決定第一個版本號（建議 `0.1.0`，README 已註明為測試版）
+- [x] 第一個版本號：`0.1.0`（使用者 2026-10-23 決定；package.json 已是 0.1.0，README 已註明為測試版）
 - [x] README「安裝」改為 `npm install -g thu-ilearn`；git 安裝移到「開發」
 - [x] README「交給 AI agent 安裝」兩段提示詞改為 npm 安裝，AGENTS.md 位置改用 `npm root -g` 查詢
 - [x] README 新增「由 git 安裝改為 npm 安裝」
