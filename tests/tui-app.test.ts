@@ -369,7 +369,7 @@ describe('background service', () => {
     const service = fakeService();
     const done = runUi(ctx, t, deps({ service }));
     await tick();
-    for (const k of ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const) t.press(k); // 背景服務 > 安裝
+    for (const k of ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const) t.press(k); // 背景服務 > 安裝
     for (let i = 0; i < 5; i++) await tick();
     expect(service.status().installed).toBe(true);
     expect(last(t)).toContain('已安裝背景服務');
@@ -379,7 +379,7 @@ describe('background service', () => {
 });
 
 describe('system update', () => {
-  const toUpdate = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter'] as const; // 系統更新
+  const toUpdate = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter'] as const; // 系統更新
 
   it('changes how often updates are checked', async () => {
     const { ctx } = seeded();
@@ -412,7 +412,7 @@ describe('system update', () => {
 });
 
 describe('complete removal', () => {
-  const toRemoval = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const; // 完全移除
+  const toRemoval = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const; // 完全移除
 
   it('removes the program after typing the confirmation and closes the UI', async () => {
     const { ctx } = seeded();

@@ -31,10 +31,12 @@ import {
   eventsText,
   filesText,
   gradesText,
+  pendingSummariesText,
   statusText,
   tasksText,
 } from './format.js';
 import { formatProgress, formatSummary, runLogin, runSetup, summaryExtras } from './setup.js';
+import { pendingSummaries, writeSummary } from '../summaries/summaries.js';
 
 const write = (s: string): void => void process.stdout.write(`${s}\n`);
 const warn = (s: string): void => void process.stderr.write(`${s}\n`);
@@ -264,6 +266,32 @@ file
   .action((id: string, o: { json?: boolean }) => {
     const r = fileTextCommand(createReadContext(), id);
     out(o.json, r, () => r.text);
+  });
+
+const summaries = program.command('summaries').description('公告與教材的摘要：由 agent 寫回，本工具不會呼叫任何 AI');
+summaries
+  .command('pending')
+  .description('列出還沒有摘要（或原文已變動）的公告與教材，數量受每日上限限制')
+  .option('--json', '以 JSON 輸出')
+  .action((o: { json?: boolean }) => {
+    const r = pendingSummaries(createReadContext());
+    out(o.json, r, () => pendingSummariesText(r));
+  });
+summaries
+  .command('write <target_id>')
+  .description('從標準輸入讀取摘要文字並寫入（需要使用者允許 agent 寫入摘要）')
+  .requiredOption('--hash <source_hash>', 'pending 回傳的 source_hash')
+  .option('--agent <名稱>', '你的 agent 名稱（英數、. _ -，最長 64 字元）')
+  .option('--json', '以 JSON 輸出')
+  .action(async (targetId: string, o: { hash: string; agent?: string; json?: boolean }) => {
+    const text = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      process.stdin.on('data', (c: Buffer) => chunks.push(c));
+      process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      process.stdin.on('error', reject);
+    });
+    const r = writeSummary(createSetUpContext(), { target_id: targetId, source_hash: o.hash, text, agent: o.agent });
+    out(o.json, r, () => `已寫入摘要 ${r.target_id}，今天還可以寫 ${r.remaining_today} 則`);
   });
 
 program

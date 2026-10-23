@@ -60,7 +60,7 @@ interface State {
 
 const AGENT_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
-function checkAgent(agent: string): void {
+export function checkAgent(agent: string): void {
   if (!AGENT_RE.test(agent) || agent === '.' || agent === '..') {
     throw new Error(`無效的 agent 名稱：${agent.slice(0, 64)}`);
   }

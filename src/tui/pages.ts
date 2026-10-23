@@ -3,7 +3,7 @@ import type { Rule } from '../rules/engine.js';
 import { displayName, type CourseRow, type TuiData } from './data.js';
 import { TWO_PANE_COLS, type Style } from './frame.js';
 import { toTaipeiIso } from '../time.js';
-import { changeKey, type Change, type Row, type TuiState, type View } from './state.js';
+import { changeKey, SUMMARY_LABEL, type Change, type Row, type TuiState, type View } from './state.js';
 import { fit, strWidth, wrap } from './text.js';
 
 type Detail = ReturnType<typeof courseCommand>;
@@ -153,6 +153,12 @@ function itemDetail(it: Item, course: string, extra: string[] = []): View {
   };
 }
 
+/** 已有摘要時，在項目下方以淡色換行顯示。 */
+function summaryRows(summary: string | null | undefined, width: number): Row[] {
+  if (!summary) return [];
+  return paragraphs(summary, Math.max(10, width - 8)).map((l) => dim(`      ${l}`));
+}
+
 function sectionRows(s: TuiState, d: TuiData, x: Detail, section: number, width: number): Row[] {
   const course = displayName(x.course.name);
   const rows: Row[] = [];
@@ -198,13 +204,19 @@ function sectionRows(s: TuiState, d: TuiData, x: Detail, section: number, width:
       return x.announcements.flatMap((a): Row[] => [
         { text: `  ${a.title}`, key: a.id, activate: { view: itemDetail(a, course, [`發布：${short(a.posted_at)}`]) } },
         dim(`      ${short(a.posted_at)}  ${a.categories.map((c) => ruleName(d.rules, c)).join('、')}`),
+        ...summaryRows(a.summary, width),
       ]);
     case 4:
       if (!x.files.length) return empty();
-      return x.files.map((f): Row => {
-        if (f.status === 'done' && f.local_path) return { text: `  ${f.name}`, key: `file:${f.id}`, activate: { open: { kind: 'file', path: f.local_path } } };
+      return x.files.flatMap((f): Row[] => {
+        if (f.status === 'done' && f.local_path) {
+          return [{ text: `  ${f.name}`, key: `file:${f.id}`, activate: { open: { kind: 'file', path: f.local_path } } }, ...summaryRows(f.summary, width)];
+        }
         const note = f.status === 'skipped' ? '老師關閉下載' : f.status === 'failed' ? '下載失敗' : f.status === 'link' ? '外部連結' : '尚未下載';
-        return { text: `  ${f.name}  ${note}`, key: `file:${f.id}`, style: 'dim', ...(f.link ? { activate: { open: { kind: 'url' as const, url: f.link } } } : {}) };
+        return [
+          { text: `  ${f.name}  ${note}`, key: `file:${f.id}`, style: 'dim', ...(f.link ? { activate: { open: { kind: 'url' as const, url: f.link } } } : {}) },
+          ...summaryRows(f.summary, width),
+        ];
       });
     case 5:
       if (!x.videos.length) return empty();
@@ -315,16 +327,27 @@ function courseSettingsPage(s: TuiState, d: TuiData): Page {
     },
     { text: '' },
     head('摘要'),
-    dim('  教材檔案摘要、老師公告摘要（Phase 6 開放）'),
+  );
+  for (const kind of ['materials', 'announcements'] as const) {
+    const enabled = d.config.summaries.courses[c.id]?.[kind] ?? false;
+    const tick: Change = { kind: 'courseSummary', courseId: c.id, summary: kind, enabled: !enabled };
+    right.push({
+      text: `  ${box(willBe(s, enabled, tick))} ${SUMMARY_LABEL[kind]}`,
+      key: `csum:${kind}`,
+      tick,
+      activate: { confirm: [tick] },
+    });
+  }
+  right.push(
     { text: '' },
-    dim('  Space 剔選規則  Enter 修改等級或提醒時間'),
+    dim('  Space 剔選規則或摘要  Enter 修改等級或提醒時間'),
   );
   return { panes: [left, right], leftWidth: 34, help: HELP.twoPane };
 }
 
 /* ---------- 5 系統設定 ---------- */
 
-export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', '背景服務', '系統更新', 'Reset', '完全移除'] as const;
+export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '摘要', '帳號', '背景服務', '系統更新', 'Reset', '完全移除'] as const;
 
 function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
   const st = d.status;
@@ -378,6 +401,20 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         { text: '  新增規則', key: 'new-rule', activate: { prompt: { kind: 'editRule', ruleId: null } } },
         { text: '  以編輯器修改全部規則（rules.yaml）', key: 'edit', activate: { editRules: true } },
         dim('  Space 剔選啟用或停用，再按 Enter 確認；沒有剔選時 Enter 修改該規則的關鍵詞'),
+      ];
+    }
+    case '摘要': {
+      const sm = d.config.summaries;
+      const tick: Change = { kind: 'agentWrite', enabled: !sm.agent_write };
+      return [
+        head('摘要'),
+        dim('  agent 讀取待摘要的公告與教材，寫好後用 ilearn summaries write 或 MCP 寫回；本工具不會呼叫任何 AI'),
+        { text: `  ${box(willBe(s, sm.agent_write, tick))} 允許 agent 寫入摘要`, key: 'agent-write', tick, activate: { confirm: [tick] } },
+        { text: '' },
+        { text: `  每日上限：${sm.daily_limit} 則` },
+        { text: `  今天已寫入：${d.summariesToday} 則` },
+        { text: '' },
+        dim('  各科是否啟用，在「課程設定」分頁'),
       ];
     }
     case '帳號':
