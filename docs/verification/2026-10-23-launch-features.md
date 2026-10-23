@@ -29,11 +29,11 @@
 | 項目 | 狀態 |
 | --- | --- |
 | 新學期切換：下一學期開學後第一次同步不推送事件、舊學期停止提醒、完成時出現含學期的 `sync.initial_completed` | TBD（只能在下一個學期觀察） |
-| agent 端到端寫摘要：`summaries pending` 取得清單，`summaries write` 寫回，摘要出現在 `ilearn ui` 課程頁與 `ilearn course --json` | TBD |
-| 設定精靈確認畫面：在真實終端顯示全部答案、修改其中一步後回到確認畫面、Ctrl-C 後重跑直接回到確認畫面 | TBD |
-| 資料夾檢視：以真實資料產生 `總覽.md`、`課程/`、`保留/`，並用 Finder 開啟檢視 | TBD |
-| 老師關閉下載的教材：同步後沒有下載，`ilearn course` 只列出檔名與 iLearn 連結 | TBD |
-| agent 端到端修改設定：允許「修改設定」後，agent 用 `ilearn config set` 改一項設定（例如夜間時段），設定生效，`ilearn ui` 首頁最上方出現提示，「3 提醒」列出該項（時間、agent、鍵、舊值與新值），`總覽.md` 的系統提示也有 | TBD |
+| agent 端到端寫摘要：`summaries pending` 取得清單，`summaries write` 寫回，摘要出現在 `ilearn ui` 課程頁與 `ilearn course --json` | 部分 PASS：裝置測試腳本以真實帳號寫入摘要，`ilearn course --json` 與 `課程/<科名>.md` 都有（2026-10-23 macOS）；真實 agent 對話與 `ilearn ui` 課程頁目視仍 TBD |
+| 設定精靈確認畫面：在真實終端顯示全部答案、修改其中一步後回到確認畫面、Ctrl-C 後重跑直接回到確認畫面 | 部分 PASS：裝置測試腳本以真實帳號、腳本化按鍵完成（確認畫面、修改第 5 步、Ctrl-C 續接、不顯示學號）；在終端親手操作仍 TBD |
+| 資料夾檢視：以真實資料產生 `總覽.md`、`課程/`、`保留/`，並用 Finder 開啟檢視 | PASS（課程/ 12 科；使用者在 Finder 確認內容正確，2026-10-23）；`保留/` 沒有舊學期資料，TBD |
+| 老師關閉下載的教材：同步後沒有下載，`ilearn course` 只列出檔名與 iLearn 連結 | PASS（22 個老師關閉下載的檔案沒有下載，2026-10-23） |
+| agent 端到端修改設定：允許「修改設定」後，agent 用 `ilearn config set` 改一項設定（例如夜間時段），設定生效，`ilearn ui` 首頁最上方出現提示，「3 提醒」列出該項（時間、agent、鍵、舊值與新值），`總覽.md` 的系統提示也有 | 部分 PASS：腳本確認 config set、「3 提醒」、`總覽.md` 與各項拒絕；`ilearn ui` 首頁目視：使用者回報沒有看到提示，以同一程式在終端重現時可見，待重測 |
 
 ## 真機測試步驟
 
