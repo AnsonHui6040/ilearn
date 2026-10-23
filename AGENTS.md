@@ -14,7 +14,7 @@
 4. 指令失敗就停下來，把標準錯誤的訊息轉告使用者。不要換其他鍵名、改檔案或用別的方法繞過。
 5. 不確定使用者的意思，先問，不要猜。
 
-找不到 `ilearn` 時看下方「出錯時」。使用者給你絕對路徑後，本文件所有 `ilearn` 都換成那個路徑執行。
+找不到 `ilearn` 時看下方「出錯時」。改用絕對路徑後，本文件所有 `ilearn` 都換成那個格式執行。
 
 ### 回答作業與截止日
 
@@ -79,7 +79,7 @@
 | 訊息提到每日上限 | 今天停止寫摘要 |
 | 訊息提到不能修改、不在清單或值無效 | 停止，把訊息轉告使用者 |
 | 其他 exit code 1 | 把標準錯誤的訊息轉告使用者，不要自己修改檔案修復 |
-| 找不到 `ilearn` 指令 | 你的執行環境可能用另一套 Node 或 PATH（桌面版 agent 常見）。不要自己搜尋或安裝；請使用者在自己的終端執行 `command -v ilearn`（Windows：`(Get-Command ilearn).Source`），之後一律用該絕對路徑 |
+| 找不到 `ilearn` 指令 | 你的執行環境可能用另一套 Node 或 PATH（桌面版 agent 常見）。透過使用者的登入 shell 查詢 Node 與 npm root：macOS `/bin/zsh -lic 'command -v node; npm root -g'`、Linux `bash -lic 'command -v node; npm root -g'`；之後一律用 `"<node>" "<npm root>/thu-ilearn/dist/cli/index.js" <參數>` 執行。仍找不到就請使用者處理，不要自己安裝 Node |
 | 讀寫 `~/.thu-ilearn` 時權限被拒（沙盒） | 把錯誤原文告訴使用者，由他調整你的權限；不要改用其他方法繞過 |
 
 ## 使用原則
@@ -124,7 +124,7 @@
 }
 ```
 
-桌面版客戶端常找不到 `ilearn`：`command` 請填 `command -v ilearn`（Windows：`(Get-Command ilearn).Source`）回傳的絕對路徑。
+桌面版客戶端常找不到 `ilearn`：`command` 填 Node 的絕對路徑，`args` 填 `["<npm root -g>/thu-ilearn/dist/cli/index.js", "mcp"]`（查詢方式見下方「出錯時」）。
 
 工具與上表指令一一對應，回傳內容相同（一段 JSON 文字）：
 

@@ -13,7 +13,7 @@ description: 讀取使用者已同步到本機的東海大學 iLearn 資料（�
 2. 會寫入的只有 `events_ack`、`summaries_write`、`config_set`、`rules_add`；使用者沒有要求就不要寫摘要、改設定或加規則。
 3. 失敗就停下來，把錯誤訊息轉告使用者；不要換其他鍵名、改檔案或用別的方法繞過。
 4. 不確定使用者的意思，先問。
-5. 找不到 `ilearn` 指令時，不要自己搜尋或安裝；請使用者在自己的終端執行 `command -v ilearn`，之後一律用該絕對路徑。
+5. 找不到 `ilearn` 指令時，照 `AGENTS.md`「出錯時」透過使用者的登入 shell 查出 Node 與 npm root，之後一律用 `"<node>" "<npm root>/thu-ilearn/dist/cli/index.js"` 執行。
 
 ## 取得資料
 
