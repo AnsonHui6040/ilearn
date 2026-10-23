@@ -24,6 +24,8 @@
 | `ilearn files search <關鍵字> --json` | 以檔名搜尋，回傳本地路徑 |
 | `ilearn file text <id>` | 輸出 `.txt`、`.md` 檔案的文字；其他格式回傳「尚未支援」 |
 | `ilearn status --json` | 同步狀態、最近錯誤、首次同步進度 |
+| `ilearn summaries pending --json` | `{ agent_write, remaining_today, pending[] }`。`pending[]` 欄位：`target_id`、`kind`（`announcement` 或 `material`）、`course`、`title`、`body`（公告內文）、`path`（教材的本機絕對路徑）、`source_hash` |
+| `ilearn summaries write <target_id> --hash <source_hash> [--agent <名稱>]` | 從標準輸入讀取摘要文字（最多 2000 字）並寫入；使用者沒有允許時 exit 1 |
 | `ilearn rules list --json` | 目前生效的規則（只讀） |
 | `ilearn service status --json` | 背景服務是否已安裝：`{ installed, method, detail }` |
 
@@ -53,11 +55,27 @@
 | `files_search` | `ilearn files search --json` | `keyword` |
 | `file_text` | `ilearn file text --json` | `id` |
 | `status` | `ilearn status --json` | 無 |
+| `summaries_pending` | `ilearn summaries pending --json` | 無 |
+| `summaries_write` | `ilearn summaries write` | `target_id`、`source_hash`、`text`，`agent` 可省略 |
 | `rules_list` | `ilearn rules list --json` | 無 |
 
-除了 `events_ack` 之外全部只讀。錯誤以工具錯誤（`isError`）回傳中文訊息。MCP server 不提供同步、Reload、登入、標記「隊員已交」、修改規則或設定、讀取帳密的工具。
+除了 `events_ack` 與 `summaries_write` 之外全部只讀；`summaries_write` 只寫摘要，且只在使用者允許時有效。錯誤以工具錯誤（`isError`）回傳中文訊息。MCP server 不提供同步、Reload、登入、標記「隊員已交」、修改規則或設定、讀取帳密的工具。
+
+## 摘要
+
+使用者在 `ilearn ui` 的「課程設定」為某科啟用教材檔案或老師公告的摘要後，這些項目會出現在待摘要清單。本工具不呼叫任何 AI，摘要由你撰寫並寫回。
+
+1. 執行 `ilearn summaries pending --json`（MCP：`summaries_pending`）。`agent_write` 為 `false` 表示使用者尚未允許 agent 寫入，不要嘗試寫入。
+2. 公告直接讀 `body`；教材讀 `path` 指向的本機檔案。
+3. 撰寫摘要（最多 2000 字），從標準輸入交給 `ilearn summaries write <target_id> --hash <source_hash> --agent <你的名稱>`（MCP：`summaries_write`，參數 `target_id`、`source_hash`、`text`、`agent`）。`source_hash` 要用同一筆 `pending` 回傳的值。
+4. 回傳 `hash` 不符的錯誤表示原文在這段期間變動了，請重新執行 `pending` 再寫。
+5. `remaining_today` 是今天還能寫的則數，用完就停，明天再寫；`pending` 的數量已受此限制。
+
+寫入後，摘要會出現在 `ilearn course`、`ilearn announcements` 輸出的 `summary` 欄位（尚未有摘要時為 `null`）。
 
 `initial_sync_in_progress` 為 `true` 時，首次同步還沒完成，清單可能不完整。這時不要告訴使用者「沒有作業」，要說明資料還在提取中。`incomplete_courses` 不為空時，表示那幾科的資料可能不完整。
+
+新學期的第一次同步與首次同步相同：不產生推送事件，中斷後會續傳，完成時寫入一則 `delivery` 為 `record` 的 `sync.initial_completed`，`summary` 欄位會寫明學期（例如「新學期 115-2 首次同步完成，共 8 門課程」）。提醒只針對最新學期；舊學期的項目不會再產生提醒。
 
 `teammate_hint` 為 `true` 表示小組作業可能已由隊員繳交，但系統無法確認，仍視為未完成。
 
@@ -117,6 +135,7 @@
 
 - 讀取所有同步資料，包括分數與評語，用來回答使用者的提問。
 - `ilearn events ack`（MCP 工具 `events_ack`）。
+- 寫入摘要：只能透過 `ilearn summaries write`（MCP 工具 `summaries_write`），且只在使用者已允許時。未允許時指令以 exit 1 與中文訊息拒絕；除非使用者說想要摘要，不要請他為你更改這項設定。
 - 查看目前規則與狀態。
 
 不可以：
@@ -133,6 +152,5 @@
 ## 限制
 
 - 資料最多與上一次同步一樣新。需要最新資料時可請使用者執行 `ilearn sync`。
-- 老師關閉下載權限的檔案預設不下載，`ilearn course` 會列出檔名與 iLearn 連結。
+- 老師關閉下載權限的檔案一律不下載，`ilearn course` 只列出檔名與 iLearn 連結。
 - `ilearn file text` 目前只支援 `.txt` 與 `.md`。
-- 每科摘要功能（`summaries`）尚未提供。
