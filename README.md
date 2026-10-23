@@ -57,25 +57,35 @@ ilearn service status
 
 1. 執行 node -v，確認版本為 22.13 以上；不符合就停下來告訴我，不要自行更換 Node 版本。
 2. 執行 npm install -g thu-ilearn。如果因權限失敗，不要使用 sudo，把錯誤訊息告訴我。
-3. 執行 ilearn --version 確認指令可用。
-4. 停下來，請我自己在終端執行 ilearn setup。設定精靈會要求輸入學號與密碼，你不可以代為輸入，也不可以讀取或保存我的帳號密碼。等我回覆「設定完成」再繼續。
-5. 把 thu-ilearn 加入你的 MCP 設定：名稱 thu-ilearn，指令 ilearn，參數 mcp。Claude Code 可以執行 claude mcp add thu-ilearn -- ilearn mcp。
-6. 設定精靈最後會詢問是否安裝背景服務。如果我沒有安裝，提醒我自己執行 ilearn service install（需要互動終端，你不可以代為安裝），再用 ilearn service status 確認。
-7. 執行 npm root -g 找到安裝位置，閱讀其中的 thu-ilearn/AGENTS.md，了解指令、事件格式與權限。如果你支援 Skill，把同一資料夾的 SKILL.md 加入你的 skill。
-8. 執行 ilearn status --json 與 ilearn tasks --json，用三到五行告訴我同步狀態與未完成的作業數量。
+3. 找到 ilearn 的絕對路徑：macOS／Linux 執行 command -v ilearn，Windows PowerShell 執行 (Get-Command ilearn).Source。
+   - 找到：記下這個路徑，之後每一個 ilearn 指令都用這個絕對路徑執行。
+   - 找不到：你的執行環境可能用的是另一套 Node 或 PATH（例如桌面版 agent 內建的 Node）。不要自己搜尋、不要重新安裝，停下來請我在自己的終端執行 command -v ilearn 與 npm root -g（Windows：(Get-Command ilearn).Source 與 npm root -g），把兩行輸出交給你。
+4. 用該路徑執行 --version 確認可用。
+5. 停下來，請我自己在終端執行 ilearn setup。設定精靈會要求輸入學號與密碼，你不可以代為輸入，也不可以讀取或保存我的帳號密碼。等我回覆「設定完成」再繼續。
+6. 把 thu-ilearn 加入你的 MCP 設定：名稱 thu-ilearn，指令填第 3 步的絕對路徑（不要只寫 ilearn，桌面版程式常常找不到），參數 mcp。Claude Code 可以執行 claude mcp add thu-ilearn -- <絕對路徑> mcp。
+7. 設定精靈最後會詢問是否安裝背景服務。如果我沒有安裝，提醒我自己執行 ilearn service install（需要互動終端，你不可以代為安裝），再用 ilearn service status 確認。
+8. 閱讀 AGENTS.md，了解指令、事件格式與權限，特別是開頭的「使用方法」。位置是「與 ilearn 同一套 Node 的 npm root -g 輸出」底下的 thu-ilearn/AGENTS.md（第 3 步找不到 ilearn 時，用我給你的那一行，不要用你自己環境的 npm root -g）。讀不到本機檔案時，改讀 https://github.com/AnsonHui6040/ilearn/blob/main/AGENTS.md 。如果你支援 Skill，把同一資料夾的 SKILL.md 加入你的 skill。
+9. 執行 ilearn status --json 與 ilearn tasks --json，用三到五行告訴我同步狀態與未完成的作業數量。
 
 之後的規則：
-- 只讀取資料。不可以執行 ilearn setup、ilearn login、ilearn mark-teammate、ilearn rules edit、ilearn ui，也不可以修改 config.yaml 或 rules.yaml。
+- 一律用第 3 步的絕對路徑執行 ilearn。
+- ilearn 會讀寫資料夾 ~/.thu-ilearn（Windows：%USERPROFILE%\.thu-ilearn）。如果你的執行環境有沙盒、出現權限錯誤，把錯誤原文告訴我，由我調整權限，不要改用其他方法繞過。
+- 只讀取資料。寫入摘要或修改設定只在我允許而且要求時才做，做法見 AGENTS.md。不可以執行 ilearn setup、ilearn login、ilearn mark-teammate、ilearn rules edit、ilearn ui，也不可以直接修改 config.yaml 或 rules.yaml。
 - 不可以讀取帳號、密碼、cookie 或 session 檔案。
 - 指令回傳 exit code 2 時，提醒我自己執行 ilearn login。
 ```
 
 ### 自架 agent（Hermes、OpenClaw 等常駐的 agent）
 
-先完成上面的安裝，讓 `ilearn` 指令在 agent 所在的機器可用，再把下面的提示詞交給你的 agent。
+先完成上面的安裝，讓 `ilearn` 指令在 agent 所在的機器可用，再把下面的提示詞交給你的 agent。桌面版 agent（例如 Codex、Claude 桌面 app）常使用自己內建的 Node，找不到你安裝的 `ilearn`；這時 agent 會停下來請你提供 `command -v ilearn` 的輸出，照做即可。
 
 ```text
-你要負責把我的東海大學 iLearn 通知轉告給我。這台機器已經安裝 thu-ilearn，指令為 ilearn。先執行 npm root -g 找到安裝位置，閱讀其中的 thu-ilearn/AGENTS.md。
+你要負責把我的東海大學 iLearn 通知轉告給我。這台機器已經安裝 thu-ilearn，指令為 ilearn。
+
+開始前：
+1. 找到 ilearn 的絕對路徑：macOS／Linux 執行 command -v ilearn，Windows PowerShell 執行 (Get-Command ilearn).Source。找不到時，你的執行環境可能用的是另一套 Node 或 PATH；不要自己搜尋、不要安裝，停下來請我在自己的終端執行 command -v ilearn 與 npm root -g，把兩行輸出交給你。之後每一個 ilearn 指令都用這個絕對路徑執行（下文的 ilearn 都指這個路徑）。
+2. 閱讀 AGENTS.md，特別是開頭的「使用方法」。位置是「與 ilearn 同一套 Node 的 npm root -g 輸出」底下的 thu-ilearn/AGENTS.md；讀不到時改讀 https://github.com/AnsonHui6040/ilearn/blob/main/AGENTS.md 。
+3. ilearn 會讀寫資料夾 ~/.thu-ilearn（Windows：%USERPROFILE%\.thu-ilearn），ack 會寫入其中的 outbox/cursors。如果你的執行環境有沙盒、出現權限錯誤，把錯誤原文告訴我，由我調整權限，不要改用其他方法繞過。
 
 接收通知（二選一）：
 A. 每 5 分鐘執行 ilearn events --deliverable --agent hermes --json，逐則處理後執行 ilearn events ack hermes <event_id>。
@@ -249,7 +259,7 @@ delivery:
 
 「agent 權限」另有一項「修改設定」，預設不允許。允許後，agent 只能用 `ilearn config set` 與 `ilearn rules add` 修改夜間時段、截止提醒、通知規則（啟用、等級、關鍵詞、新增）、每科的規則與提醒覆寫、摘要開關與每日上限、資料夾檢視、更新頻率。帳號、密碼、推送方式（hook 指令與 webhook 網址）、執行環境、節次時間、背景服務、更新、解除安裝與權限本身，agent 一律不能改。每次修改都會寫入 `data/agent-changes.jsonl`，7 日內的修改會顯示在 `ilearn ui` 首頁最上方與「提醒」分頁，也列在 `總覽.md` 的系統提示。
 
-MCP 客戶端設定範例：
+MCP 客戶端設定範例（桌面版客戶端找不到 `ilearn` 時，`command` 改填 `command -v ilearn` 回傳的絕對路徑，例如 `/opt/homebrew/bin/ilearn`）：
 
 ```json
 {
