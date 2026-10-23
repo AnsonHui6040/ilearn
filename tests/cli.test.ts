@@ -25,6 +25,7 @@ import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/co
 import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
 import {
   askRules,
+  askService,
   DEFAULT_WEBHOOK_URL,
   deliverySummary,
   detectEnvironment,
@@ -718,5 +719,55 @@ describe('setup rules step', () => {
     out.mockRestore();
     expect(f.calls.confirm).toEqual([]);
     expect(ctx.rules.filter((r) => r.enabled).map((r) => r.id)).toEqual(['exam']);
+  });
+});
+
+describe('setup background service step', () => {
+  const quiet = () => vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  const svc = (installed: boolean, install: () => { detail: string } = () => ({ detail: '已建立 LaunchAgent' })) => {
+    const calls = { install: 0 };
+    return {
+      calls,
+      s: {
+        status: () => ({ installed, method: installed ? ('launchd' as const) : null, detail: installed ? '已安裝（LaunchAgent）' : '未安裝' }),
+        install: () => {
+          calls.install++;
+          return install();
+        },
+      },
+    };
+  };
+  const printed = (spy: ReturnType<typeof quiet>): string => spy.mock.calls.map((c) => String(c[0])).join('');
+
+  it('installs the service when the user agrees', async () => {
+    const out = quiet();
+    const f = svc(false);
+    const asked: string[] = [];
+    await askService({ confirm: ((o: { message: string }) => (asked.push(o.message), Promise.resolve(true))) as never }, f.s);
+    const text = printed(out);
+    out.mockRestore();
+    expect(asked).toEqual(['要安裝背景服務，每 5 分鐘自動同步、提醒與推送嗎？']);
+    expect(f.calls.install).toBe(1);
+    expect(text).toContain('已儲存：背景服務（已建立 LaunchAgent）');
+  });
+
+  it('does not ask again when the service is already installed', async () => {
+    const out = quiet();
+    const f = svc(true);
+    await askService({ confirm: (() => Promise.reject(new Error('should not ask'))) as never }, f.s);
+    const text = printed(out);
+    out.mockRestore();
+    expect(f.calls.install).toBe(0);
+    expect(text).toContain('背景服務已安裝（LaunchAgent）');
+  });
+
+  it('explains how to install later when declined or when installing fails', async () => {
+    const out = quiet();
+    await askService({ confirm: (() => Promise.resolve(false)) as never }, svc(false).s);
+    await askService({ confirm: (() => Promise.resolve(true)) as never }, svc(false, () => { throw new CliExit(1, '載入 LaunchAgent 失敗：boom'); }).s);
+    const text = printed(out);
+    out.mockRestore();
+    expect(text).toContain('之後可以執行 ilearn service install，或在 ilearn ui 的系統設定安裝');
+    expect(text).toContain('載入 LaunchAgent 失敗：boom');
   });
 });

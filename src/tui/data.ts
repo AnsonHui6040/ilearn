@@ -13,6 +13,7 @@ import { courseCode, slotLabel } from '../domain/schedule.js';
 import type { ScheduleSlot } from '../ilearn/courseInfo.js';
 import type { Rule } from '../rules/engine.js';
 import { parseIsoDuration, taipeiDate, taipeiParts, toTaipeiIso } from '../time.js';
+import type { ServiceStatus } from '../service/service.js';
 import type { Delivery } from '../types.js';
 
 const DAY_MS = 86_400_000;
@@ -66,6 +67,8 @@ export interface TuiData {
   notices: string[];
   rules: Rule[];
   config: Config;
+  /** 背景服務狀態，由介面另外取得 */
+  service?: ServiceStatus;
 }
 
 /** 去掉開頭的「(…)」，再去掉最後一個冒號（含）之前的部分。 */

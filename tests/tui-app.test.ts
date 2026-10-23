@@ -76,8 +76,18 @@ const noPrompts: PromptDeps = {
   confirm: () => Promise.resolve(false),
 };
 
+const fakeService = () => {
+  let installed = false;
+  return {
+    status: () => ({ installed, method: installed ? ('launchd' as const) : null, detail: installed ? '已安裝（LaunchAgent）' : '未安裝' }),
+    install: () => ((installed = true), '已安裝背景服務：已建立 LaunchAgent'),
+    uninstall: () => ((installed = false), '已移除背景服務'),
+  };
+};
+
 const deps = (over: Partial<Parameters<typeof runUi>[2]> = {}) => ({
   prompts: noPrompts,
+  service: fakeService(),
   opener: () => ({ ok: true, message: '已開啟' }),
   clock: fakeClock(),
   color: false,
@@ -332,6 +342,22 @@ describe('settings prompts', () => {
     for (const k of ['5', 'down', 'down', 'enter', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k); // 介面啟用 > 修改
     await settle();
     expect(ctx.config.interfaces.folder).toBe(false);
+    t.press('q');
+    await done;
+  });
+});
+
+describe('background service', () => {
+  it('installs the service from the system settings page', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const service = fakeService();
+    const done = runUi(ctx, t, deps({ service }));
+    await tick();
+    for (const k of ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const) t.press(k); // 背景服務 > 安裝
+    for (let i = 0; i < 5; i++) await tick();
+    expect(service.status().installed).toBe(true);
+    expect(last(t)).toContain('已安裝背景服務');
     t.press('q');
     await done;
   });
