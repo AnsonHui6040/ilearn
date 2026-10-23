@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,7 @@ export interface ServiceDeps {
   writeFile(path: string, data: string): void;
   removeFile(path: string): void;
   exists(path: string): boolean;
+  readFile(path: string): string | null;
   mkdir(path: string): void;
 }
 
@@ -35,6 +36,28 @@ export interface ServiceStatus {
   installed: boolean;
   method: ServiceMethod | null;
   detail: string;
+  /** 排程執行的程式（dist/cli/index.js）路徑；讀不到時為 null */
+  target?: string | null;
+  /** 排程執行的不是目前這份程式（例如改用 npm 安裝後） */
+  mismatch?: boolean;
+}
+
+const unxml = (s: string): string => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+function serviceTarget(d: ServiceDeps, method: ServiceMethod | null): string | null {
+  if (method === 'launchd') {
+    const m = /<key>ProgramArguments<\/key>\s*<array>\s*<string>[^<]*<\/string>\s*<string>([^<]*)<\/string>/.exec(d.readFile(plistPath(d.home)) ?? '');
+    return m?.[1] ? unxml(m[1]) : null;
+  }
+  if (method === 'systemd') {
+    const m = /^ExecStart="[^"]*" "([^"]*)"/m.exec(d.readFile(join(unitDir(d.home), `${UNIT}.service`)) ?? '');
+    return m?.[1] ?? null;
+  }
+  if (method === 'cron') {
+    const line = readCrontab(d).find((l) => l.includes(CRON_MARK)) ?? '';
+    return /"[^"]*" "([^"]*)" run/.exec(line)?.[1] ?? null;
+  }
+  return null;
 }
 
 const LABEL = 'thu-ilearn.run';
@@ -171,7 +194,16 @@ export function installService(d: ServiceDeps, spec: ServiceSpec): { method: Ser
   }
 }
 
-export function serviceStatus(d: ServiceDeps): ServiceStatus {
+/** expectedScript：目前這份程式的路徑；提供時會比較排程執行的是否同一份。 */
+export function serviceStatus(d: ServiceDeps, expectedScript?: string): ServiceStatus {
+  const base = baseStatus(d);
+  if (!base.installed || expectedScript === undefined) return base;
+  const target = serviceTarget(d, base.method);
+  const mismatch = target !== null && target !== expectedScript;
+  return { ...base, target, mismatch, ...(mismatch ? { detail: `${base.detail}，但執行的是另一份程式：${target}` } : {}) };
+}
+
+function baseStatus(d: ServiceDeps): ServiceStatus {
   switch (d.platform) {
     case 'darwin': {
       if (!d.exists(plistPath(d.home))) return { installed: false, method: null, detail: '未安裝' };
@@ -242,6 +274,13 @@ export function defaultServiceDeps(): ServiceDeps {
     writeFile: (p, data) => writeFileSync(p, data, { mode: 0o644 }),
     removeFile: (p) => rmSync(p, { force: true }),
     exists: (p) => existsSync(p),
+    readFile: (p) => {
+      try {
+        return readFileSync(p, 'utf8');
+      } catch {
+        return null;
+      }
+    },
     mkdir: (p) => void mkdirSync(p, { recursive: true }),
   };
 }

@@ -393,8 +393,9 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
       return [
         head('背景服務'),
         dim('  由系統排程每 5 分鐘執行一次 ilearn run：到時間就同步，並檢查提醒與推送'),
-        { text: `  狀態：${sv ? sv.detail : '無法取得'}` },
+        { text: `  狀態：${sv ? sv.detail : '無法取得'}`, ...(sv?.mismatch ? { style: 'red' as const } : {}) },
         { text: '' },
+        ...(sv?.mismatch ? [{ text: '  重新安裝背景服務（改為執行這份程式）', key: 'svc-re', activate: { run: 'serviceInstall' as const } }] : []),
         sv?.installed
           ? { text: '  移除背景服務', key: 'svc', activate: { run: 'serviceUninstall' } }
           : { text: '  安裝背景服務', key: 'svc', activate: { run: 'serviceInstall' } },

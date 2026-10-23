@@ -7,7 +7,7 @@
 - 這是非官方工具，與東海大學沒有任何關係。
 - 使用前請自行查閱學校的資訊使用規範，確認這樣的使用方式符合規定，責任由使用者自行承擔。
 - 資料只存在你的電腦，不會上傳到任何伺服器。
-- 不收集遙測，不回傳任何使用紀錄。
+- 不收集遙測，不回傳任何使用紀錄。檢查新版本時只向 npm 查詢 thu-ilearn 的最新版本號，可在設定中關閉。
 - 本工具只用 GET 讀取 iLearn，唯一的 POST 是登入；不會修改 iLearn 上的任何資料，也不會替你繳交作業。
 - 核心不呼叫任何 LLM。
 - 原始碼公開，歡迎檢查帳號密碼是如何處理的。
@@ -119,11 +119,20 @@ ilearn service uninstall   # 移除
 
 ## 系統更新
 
-`ilearn ui` 的「系統設定 > 系統更新」顯示目前版本，可以設定自動檢查頻率（每天、每星期或關閉，預設每天），並有「立即檢查」與「更新」。有新版本時首頁最上方會提示。自動檢查與更新將在發布到 npm 後提供；目前請在程式資料夾執行：
+背景服務會依設定的頻率（每天、每星期或關閉，預設每天）向 npm 查詢最新版本，有新版本時 `ilearn ui` 首頁最上方會提示。`ilearn ui` 的「系統設定 > 系統更新」可以改頻率、立即檢查及更新，也可以用指令：
+
+```sh
+ilearn update --check   # 只檢查
+ilearn update           # 更新到最新版本（只能在互動終端執行）
+```
+
+以 npm 安裝時，更新會執行 `npm install -g thu-ilearn@<最新版本>`，背景服務不必重新安裝。以 git 安裝時請在程式資料夾執行：
 
 ```sh
 cd ~/thu-ilearn && git pull && npm ci && npm run build
 ```
+
+由 git 安裝改為 npm 安裝後，請重新執行 `ilearn service install`；`ilearn service status` 會提示背景服務是否仍在執行舊的那一份程式。
 
 ## 解除安裝
 
@@ -174,6 +183,7 @@ delivery:
 | `ilearn mark-teammate <item_id> [--undo]` | 標記小組作業「隊員已交」，只能由你在互動終端操作 |
 | `ilearn rules list`、`ilearn rules test [檔案]`、`ilearn rules edit` | 列出、試算、編輯關鍵詞規則 |
 | `ilearn service install`、`uninstall`、`status [--json]` | 安裝、移除背景服務，或查看是否已安裝 |
+| `ilearn update [--check]` | 檢查或更新到 npm 上的最新版本 |
 | `ilearn status [--json]` | 同步狀態、最近錯誤、首次同步進度、推送狀態 |
 | `ilearn mcp` | 以 stdio 啟動 MCP server，供支援 MCP 的 agent 使用 |
 

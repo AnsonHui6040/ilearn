@@ -46,6 +46,7 @@ function fakeDeps(platform: NodeJS.Platform, results: Record<string, { code: num
     writeFile: (p, data) => void files.set(p, data),
     removeFile: (p) => void files.delete(p),
     exists: (p) => files.has(p),
+    readFile: (p) => files.get(p) ?? null,
     mkdir: () => {},
   };
   return { deps, files, calls };
@@ -214,5 +215,23 @@ describe('stableNodePath', () => {
   it('keeps the running Node when PATH points to a different one', () => {
     expect(stableNodePath('/opt/homebrew/Cellar/node/26.7.0/bin/node', '/usr/local/bin', realpath)).toBe('/opt/homebrew/Cellar/node/26.7.0/bin/node');
     expect(stableNodePath('/x/node', undefined, realpath)).toBe('/x/node');
+  });
+});
+
+describe('which program the service runs', () => {
+  it('reports the script in the LaunchAgent and warns when it is another copy', () => {
+    const { deps } = fakeDeps('darwin');
+    installService(deps, spec);
+    expect(serviceStatus(deps, spec.script)).toMatchObject({ installed: true, target: spec.script, mismatch: false });
+    expect(serviceStatus(deps, '/opt/homebrew/lib/node_modules/thu-ilearn/dist/cli/index.js')).toMatchObject({ target: spec.script, mismatch: true });
+  });
+
+  it('reads the script from a systemd unit and from crontab', () => {
+    const sd = fakeDeps('linux');
+    installService(sd.deps, spec);
+    expect(serviceStatus(sd.deps, '/other/index.js')).toMatchObject({ method: 'systemd', target: spec.script, mismatch: true });
+    const line = `*/5 * * * * "/n" "${spec.script}" run >> "/l" 2>&1 ${CRON_MARK}\n`;
+    const cr = fakeDeps('linux', { 'systemctl --user show-environment': { code: 1 }, 'crontab -l': { code: 0, stdout: line } });
+    expect(serviceStatus(cr.deps, spec.script)).toMatchObject({ method: 'cron', target: spec.script, mismatch: false });
   });
 });

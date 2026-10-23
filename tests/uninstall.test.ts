@@ -31,6 +31,14 @@ describe('planUninstall', () => {
     expect(notPackage.deleteProgramDir).toBe(false);
   });
 
+  it('leaves an npm global install to npm rm -g', () => {
+    const dir = '/opt/homebrew/lib/node_modules/thu-ilearn';
+    const p = planUninstall({ ...base, removeData: false, programDir: dir });
+    expect(p.deleteProgramDir).toBe(false);
+    expect(p.lines).toContain('程式資料夾由 npm rm -g 一併移除');
+    expect(p.lines.join('\n')).not.toContain('請自行刪除');
+  });
+
   it('refuses to delete the home folder or the file system root as data', () => {
     expect(() => planUninstall({ ...base, dataRoot: HOME, removeData: true, programDir: `${HOME}/thu-ilearn` })).toThrow(CliExit);
     expect(() => planUninstall({ ...base, dataRoot: '/', removeData: true, programDir: `${HOME}/thu-ilearn` })).toThrow(CliExit);
@@ -55,6 +63,13 @@ describe('runUninstall', () => {
     const out = await runUninstall(plan, deps);
     expect(calls).toEqual(['service', 'logout', `rm ${HOME}/.thu-ilearn`, 'npm rm -g thu-ilearn', `rm ${HOME}/thu-ilearn`]);
     expect(out.at(-1)).toBe('thu-ilearn 已完全移除');
+  });
+
+  it('does not ask to delete an npm install by hand', async () => {
+    const { deps } = fake();
+    const plan = planUninstall({ ...base, removeData: false, programDir: '/opt/homebrew/lib/node_modules/thu-ilearn' });
+    const out = await runUninstall(plan, deps);
+    expect(out.join('\n')).not.toContain('請自行刪除');
   });
 
   it('keeps going and reports a failed step', async () => {

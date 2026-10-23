@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { dataRoot } from '../config/paths.js';
+import { currentVersion } from '../update/update.js';
 import { logout } from './auth.js';
 import {
   ackCommand,
@@ -56,7 +57,7 @@ const program = new Command();
 program
   .name('ilearn')
   .description('把東海大學 iLearn 同步到本機，供 AI agent 讀取（非官方工具）')
-  .version('0.1.0');
+  .version(currentVersion());
 
 program
   .command('setup')
@@ -101,9 +102,49 @@ program
 
 program
   .command('run')
-  .description('給 cron 使用：到點才同步，並檢查提醒')
+  .description('背景服務每 5 分鐘執行：到點才同步，檢查提醒，並依設定檢查新版本')
   .action(async () => {
-    await runHandler();
+    try {
+      await runHandler();
+    } finally {
+      const root = dataRoot();
+      if (isSetUp(root)) {
+        const { maybeCheckUpdate } = await import('./commands/update.js');
+        const { currentVersion } = await import('../update/update.js');
+        const { loadConfig } = await import('../config/config.js');
+        await maybeCheckUpdate({ root, freq: loadConfig(root).updates.check, current: currentVersion(), now: new Date(), env: process.env, log: warn });
+      }
+    }
+  });
+
+program
+  .command('update')
+  .description('更新到 npm 上的最新版本（只能由本人在互動終端操作）')
+  .option('--check', '只檢查是否有新版本')
+  .option('--json', '與 --check 一起使用，以 JSON 輸出')
+  .action(async (o: { check?: boolean; json?: boolean }) => {
+    const { checkForUpdate, currentProgramDirKind, currentVersion, npmBinary } = await import('../update/update.js');
+    const root = dataRoot();
+    if (o.check) {
+      const st = await checkForUpdate({ root, current: currentVersion(), now: new Date(), env: process.env });
+      out(o.json, st, () => (st.available ? `有新版本 ${st.latest}（目前 ${st.current}），執行 ilearn update 更新` : `已是最新版本 ${st.current}`));
+      return;
+    }
+    const { updateApplyCommand } = await import('./commands/update.js');
+    const { defaultServiceDeps } = await import('../service/service.js');
+    const { existsSync } = await import('node:fs');
+    write(
+      await updateApplyCommand({
+        isTTY: Boolean(process.stdin.isTTY),
+        root,
+        current: currentVersion(),
+        now: new Date(),
+        env: process.env,
+        kind: currentProgramDirKind(),
+        npm: npmBinary(process.execPath, existsSync),
+        run: (cmd, args) => defaultServiceDeps().run(cmd, args),
+      }),
+    );
   });
 
 program
@@ -299,8 +340,8 @@ service
   .description('背景服務是否已安裝')
   .option('--json', '以 JSON 輸出')
   .action(async (o: { json?: boolean }) => {
-    const { defaultServiceDeps, serviceStatus } = await import('../service/service.js');
-    const r = serviceStatus(defaultServiceDeps());
+    const { defaultServiceDeps, defaultServiceSpec, serviceStatus } = await import('../service/service.js');
+    const r = serviceStatus(defaultServiceDeps(), defaultServiceSpec(dataRoot()).script);
     out(o.json, r, () => `背景服務：${r.detail}`);
   });
 

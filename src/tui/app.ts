@@ -15,7 +15,9 @@ import {
 } from '../service/uninstall.js';
 import { homedir } from 'node:os';
 import type { UpdateFrequency } from '../config/config.js';
-import { currentVersion, readUpdateStatus, UPDATE_NOT_READY } from '../update/update.js';
+import { checkForUpdate, currentProgramDirKind, currentVersion, npmBinary, readUpdateStatus } from '../update/update.js';
+import { updateApplyCommand } from '../cli/commands/update.js';
+import { existsSync } from 'node:fs';
 import { CliExit, reloadSettings, type CliContext } from '../cli/context.js';
 import type { Delivery } from '../types.js';
 import {
@@ -130,11 +132,22 @@ export async function defaultDeps(ctx: CliContext): Promise<UiDeps> {
   return {
     prompts: p as unknown as PromptDeps,
     service: {
-      status: () => serviceStatus(defaultServiceDeps()),
+      status: () => serviceStatus(defaultServiceDeps(), defaultServiceSpec(dataRoot()).script),
       install: () => `已安裝背景服務：${installService(defaultServiceDeps(), defaultServiceSpec(dataRoot())).detail}`,
       uninstall: () => uninstallService(defaultServiceDeps()),
     },
-    updater: { check: async () => UPDATE_NOT_READY, apply: async () => UPDATE_NOT_READY },
+    updater: {
+      check: async () => {
+        const st = await checkForUpdate({ root: ctx.root, current: currentVersion(), now: new Date(), env: process.env });
+        return st.available ? `有新版本 ${st.latest}（目前 ${st.current}）` : `已是最新版本 ${st.current}`;
+      },
+      apply: () =>
+        updateApplyCommand({
+          isTTY: true, root: ctx.root, current: currentVersion(), now: new Date(), env: process.env,
+          kind: currentProgramDirKind(), npm: npmBinary(process.execPath, existsSync),
+          run: (cmd, args) => defaultServiceDeps().run(cmd, args),
+        }),
+    },
     removal: {
       plan: (removeData) =>
         planUninstall({ removeData, dataRoot: ctx.root, programDir: currentProgramDir(), home: homedir(), isPackage: isThuIlearnPackage }),
