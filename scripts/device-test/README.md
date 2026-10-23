@@ -42,6 +42,8 @@ cp scripts/device-test/credentials.example scripts/device-test/credentials.local
 
 `credentials.local` 填 `ILEARN_TEST_USERNAME`；`ILEARN_TEST_PASSWORD` 可以留空，執行時會要求輸入（不會顯示）。這個檔案不會被 git 追蹤，填好後不要分享或上傳。
 
+建議用 `nano scripts/device-test/credentials.local` 編輯：等號後直接寫值，不要加引號或空白。TextEdit 可能把檔案存成 RTF，或把引號、連字號自動換成全形，造成登入失敗。腳本會先試登入一次，失敗就停止並列出可能原因（不顯示帳密內容）。
+
 | 系統 | 指令 |
 | --- | --- |
 | macOS | `./scripts/device-test/macos.sh [--interactive] [--keep]` |

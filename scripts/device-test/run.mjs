@@ -163,13 +163,64 @@ function compactCapture(chunks) {
 
 /* ---------- 帳密 ---------- */
 
+/** 讀取帳密時做過的修正（只記錄類型，不含內容），登入失敗時提示用。 */
+const credNotes = [];
+
+/** credentials.local 優先（三個平台同一套解析）；沒有檔案才用環境變數。 */
+function credentialSource() {
+  const file = join(here, 'credentials.local');
+  if (!existsSync(file)) {
+    return { username: process.env.ILEARN_TEST_USERNAME ?? '', password: process.env.ILEARN_TEST_PASSWORD ?? '' };
+  }
+  const text = readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  if (text.trimStart().startsWith('{\\rtf')) {
+    process.stderr.write(
+      'credentials.local 被存成 RTF 格式（TextEdit 預設）。請改用 nano scripts/device-test/credentials.local 編輯，或在 TextEdit 選「格式 > 製作純文字」後再存檔。\n',
+    );
+    process.exit(1);
+  }
+  const out = { username: '', password: '' };
+  for (const line of text.split(/\r?\n|\r/)) {
+    const m = /^\s*(ILEARN_TEST_USERNAME|ILEARN_TEST_PASSWORD)\s*=(.*)$/.exec(line);
+    if (m === null) continue;
+    if (m[1] === 'ILEARN_TEST_USERNAME') out.username = m[2];
+    else out.password = m[2];
+  }
+  return out;
+}
+
+const QUOTES = [['"', '"'], ["'", "'"], ['“', '”'], ['‘', '’'], ['「', '」']];
+
+/** 去掉換行字元、前後空白與成對的引號；回傳值與做過的修正。 */
+function cleanValue(v, isUsername) {
+  const notes = [];
+  let s = v.replace(/[\r\n]/g, '');
+  const trimmed = s.trim();
+  if (trimmed !== s) notes.push('前後有空白，已去掉');
+  s = trimmed;
+  for (const [a, b] of QUOTES) {
+    if (s.length >= 2 && s.startsWith(a) && s.endsWith(b)) {
+      s = s.slice(a.length, s.length - b.length);
+      notes.push('有引號，已去掉');
+      break;
+    }
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[^\x00-\x7F]/.test(s)) notes.push(isUsername ? '含非英數字元' : '含全形或特殊字元（文字編輯器可能把引號或連字號自動換成全形）');
+  return { value: s, notes };
+}
+
 async function readCredentials() {
   if (MOCK) {
     const m = await import(pathToFileURL(join(here, 'mock-api.mjs')).href);
     return { username: m.MOCK_USERNAME, password: m.MOCK_PASSWORD };
   }
-  const username = (process.env.ILEARN_TEST_USERNAME ?? '').trim();
-  let password = process.env.ILEARN_TEST_PASSWORD ?? '';
+  const raw = credentialSource();
+  const u = cleanValue(raw.username, true);
+  const pw = cleanValue(raw.password, false);
+  credNotes.push(...u.notes.map((n) => `學號${n}`), ...pw.notes.map((n) => `密碼${n}`));
+  const username = u.value;
+  let password = pw.value;
   if (username === '') {
     process.stderr.write('尚未填寫學號：請編輯 scripts/device-test/credentials.local，填入 ILEARN_TEST_USERNAME。\n');
     process.exit(1);
@@ -299,7 +350,27 @@ async function main() {
     pass('不安裝、不移除背景服務，不保存密碼', '腳本沒有呼叫這類功能');
   });
 
-  const notReady = (why) => (state.aborted ? '安全檢查未通過' : why);
+  /* 先登入一次確認帳密；失敗就停止，不讓後面的步驟連帶失敗，也避免重複嘗試登入 */
+  if (!MOCK && !state.aborted) {
+    await step('0.5', '登入檢查', async () => {
+      const { createHttp } = await mod('ilearn/http.js');
+      const { login } = await mod('ilearn/auth.js');
+      try {
+        await login(createHttp({}), creds.username, creds.password);
+        pass('iLearn 登入成功');
+      } catch (e) {
+        logError('登入檢查', e);
+        const hints = credNotes.length ? `；讀取帳密時：${credNotes.join('、')}` : '';
+        fail('iLearn 登入', `${e instanceof Error ? e.message : String(e)}${hints}`);
+        say('  請確認 credentials.local：一行一個，等號後直接寫值，不加引號或空白；建議用 nano 編輯。');
+        say('  也可以把 ILEARN_TEST_PASSWORD 留空，執行時再輸入密碼。先用同一組帳密在瀏覽器登入 iLearn 確認可以登入。');
+        state.aborted = true;
+        state.abortReason = '登入失敗';
+      }
+    });
+  }
+
+  const notReady = (why) => (state.aborted ? (state.abortReason ?? '安全檢查未通過') : why);
   let ctx = null;
   const mockAuthFor = async () => {
     const { writeAccount, readAccount } = state.mods.context;
@@ -365,6 +436,10 @@ async function main() {
     check('進度檔尚未標記完成', prog1 !== null && prog1.finished === false, prog1 === null ? '沒有進度檔' : '進度檔已標記完成');
     check('沒有保存密碼', ctx1.config.password_saved === false, 'password_saved 不是 false');
     ctx1.db.close();
+    if (err1 !== null && !(err1.name === 'CliExit' && err1.code === 130)) {
+      skip('重跑設定精靈', '第一次設定沒有走到確認畫面，不再重跑');
+      return;
+    }
 
     // 第二次：只應該出現確認畫面
     ctx = await makeCtx();
@@ -389,6 +464,11 @@ async function main() {
     check('輸出不含學號與密碼（重跑）', !text2.includes(creds.username) && !text2.includes(creds.password), '輸出出現了學號或密碼');
     const prog2 = existsSync(join(state.root, 'data', 'setup-progress.json')) ? progressOf() : null;
     check('選「確認完成」後進度檔標記完成', prog2 !== null && prog2.finished === true, '進度檔沒有標記完成');
+    if (err2 !== null) {
+      // 設定沒有完成，後面的步驟沒有資料可測，改為略過而不是連帶失敗
+      ctx.db.close();
+      ctx = null;
+    }
   });
 
   /* 2 資料夾檢視 */

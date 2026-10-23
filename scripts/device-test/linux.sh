@@ -40,7 +40,7 @@ if [ "$MOCK" = "0" ]; then
   else
     cp "$HERE/credentials.example" "$HERE/credentials.local"
     chmod 600 "$HERE/credentials.local"
-    echo "已建立 $HERE/credentials.local，請用文字編輯器填入學號（密碼可留空，執行時再輸入），存檔後重新執行。" >&2
+    echo "已建立 $HERE/credentials.local，請用 nano $HERE/credentials.local 填入學號（密碼可留空，執行時再輸入），存檔後重新執行。" >&2
     exit 1
   fi
 fi
