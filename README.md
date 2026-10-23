@@ -64,7 +64,10 @@ ilearn service status
    - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
    - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
    - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
-   出現權限錯誤（EACCES）不要使用 sudo，把錯誤訊息告訴我。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
+   出現權限錯誤（EACCES，常見於用系統套件或官方安裝檔裝的 Node）：不要使用 sudo。先問我：「要把 npm 的全域安裝位置改到你的家目錄 ~/.local 嗎？這是 npm 官方建議的做法，不需要 sudo，只會寫入 ~/.npmrc。」我同意後才執行：
+     env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm config set prefix "$HOME/.local"'（macOS 把 bash 換成 /bin/zsh）
+     然後重做第 1 步，NPM_ROOT 會變成 ~/.local/lib/node_modules，再重做這一步的安裝。
+     安裝成功後執行 env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'command -v ilearn'（macOS 用 /bin/zsh）。沒有輸出時，告訴我需要把 ~/.local/bin 加入 PATH，問我同意後在 ~/.profile（macOS：~/.zprofile）最後加上一行 export PATH="$HOME/.local/bin:$PATH"，並提醒我開新的終端視窗。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
 3. 之後執行 ilearn 一律用這個格式（下文寫「ilearn」的地方都照這樣換）：
    "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" <參數>
    例如 "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" --version。Windows 的路徑分隔用 \。先執行 --version 確認有版本號。
@@ -99,7 +102,10 @@ ilearn service status
    - macOS：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin /bin/zsh -lic 'npm install -g thu-ilearn'
    - Linux：env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm install -g thu-ilearn'
    - Windows（PowerShell）：$env:Path=[Environment]::GetEnvironmentVariable('Path','Machine')+';'+[Environment]::GetEnvironmentVariable('Path','User'); npm install -g thu-ilearn
-   出現權限錯誤（EACCES）不要使用 sudo，把錯誤訊息告訴我。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
+   出現權限錯誤（EACCES，常見於用系統套件或官方安裝檔裝的 Node）：不要使用 sudo。先問我：「要把 npm 的全域安裝位置改到你的家目錄 ~/.local 嗎？這是 npm 官方建議的做法，不需要 sudo，只會寫入 ~/.npmrc。」我同意後才執行：
+     env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'npm config set prefix "$HOME/.local"'（macOS 把 bash 換成 /bin/zsh）
+     然後重做第 1 步，NPM_ROOT 會變成 ~/.local/lib/node_modules，再重做這一步的安裝。
+     安裝成功後執行 env -i HOME="$HOME" USER="$USER" PATH=/usr/local/bin:/usr/bin:/bin bash -lic 'command -v ilearn'（macOS 用 /bin/zsh）。沒有輸出時，告訴我需要把 ~/.local/bin 加入 PATH，問我同意後在 ~/.profile（macOS：~/.zprofile）最後加上一行 export PATH="$HOME/.local/bin:$PATH"，並提醒我開新的終端視窗。如果你的沙盒擋住網路或寫入，依你的介面向我申請核准，不要改用其他方法繞過。
    剛完成安裝時，停下來請我自己在終端執行 ilearn setup（會要求學號與密碼，你不可以代為輸入或讀取），等我回覆「設定完成」再繼續。
 3. 之後執行 ilearn 一律用這個格式（下文寫「ilearn」的地方都照這樣換）：
    "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" <參數>
