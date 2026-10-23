@@ -81,7 +81,7 @@ export function statusText(s: Ret<typeof statusCommand>): string {
 }
 
 export function pendingSummariesText(r: PendingSummaries): string {
-  const lines = [r.agent_write ? 'agent 可寫入摘要' : 'agent 目前不可寫入摘要（使用者可在 ilearn setup 第 8 步或 ilearn ui 開啟）'];
+  const lines = [r.agent_write ? 'agent 可寫入摘要' : 'agent 目前不可寫入摘要（使用者可在 ilearn setup 第 8 步或 ilearn ui 的「系統設定 > agent 權限」開啟）'];
   lines.push(`今天還可以寫 ${r.remaining_today} 則，待摘要 ${r.pending.length} 則`);
   for (const t of r.pending) lines.push(`${t.target_id}  ${t.kind === 'material' ? '教材' : '公告'}  ${t.course.name}  ${t.title}`);
   return lines.join('\n');
