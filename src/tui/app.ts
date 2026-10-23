@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { emitKeypressEvents } from 'node:readline';
 import { rulesEditCommand } from '../cli/commands/rules.js';
 import { deliverCommand, reloadCommand, syncCommand } from '../cli/commands/sync.js';
+import { renderFolderView } from '../folder/folder.js';
 import { logout } from '../cli/auth.js';
 import { DEFAULT_WEBHOOK_URL, formatProgress, runLogin } from '../cli/setup.js';
 import { webhookUrlError } from '../events/dispatch.js';
@@ -408,6 +409,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
       term.write('同步中，請稍候\r\n');
       const r = await syncCommand(ctx, { force: true, onProgress: (p) => term.write(`\r${formatProgress(p)}   `) });
       await deliverCommand(ctx, (s) => term.write(`\r\n${s}`));
+      renderFolderView(ctx, (s) => term.write(`\r\n${s}`));
       return r.skipped ? (r.reason ?? '略過') : '同步完成';
     }
     if (what === 'login') {

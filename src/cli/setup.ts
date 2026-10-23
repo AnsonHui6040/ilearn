@@ -7,6 +7,7 @@ import { writeSecureFile } from '../config/paths.js';
 import { getSyncState, listFiles, listItems } from '../db/repo.js';
 import { AuthError } from '../ilearn/auth.js';
 import { webhookUrlError } from '../events/dispatch.js';
+import { renderFolderView } from '../folder/folder.js';
 import { stringifyRules } from '../rules/yaml.js';
 import { defaultServiceDeps, defaultServiceSpec, installService, serviceStatus, type ServiceStatus } from '../service/service.js';
 import type { SyncProgress, SyncReport } from '../sync/sync.js';
@@ -383,6 +384,7 @@ async function setupRest(ctx: CliContext, p: Prompts, d: SetupDefaults, t: Setup
 
     await askSummaries(ctx, p, d, t);
     await confirmSettings(ctx, p, t);
+    renderFolderView(ctx);
 
     // 完成摘要
     if (report) say(formatSummary(report, summaryExtras(ctx.db, ctx.now())));

@@ -1,4 +1,5 @@
 import { getSyncState } from '../../db/repo.js';
+import { renderFolderView } from '../../folder/folder.js';
 import { dispatchPending, type DispatchResult } from '../../events/dispatch.js';
 import type { Channel } from '../../events/outbox.js';
 import { isSyncDue, randomJitterMs } from '../../events/schedule.js';
@@ -137,6 +138,7 @@ export async function runTick(
 
   const reminders = await runReminderTick(ctx);
   const delivery = await deliverCommand(ctx, log);
+  if (synced || reminders > 0) renderFolderView(ctx, log);
   if (failure !== null) throw failure;
   return { synced, reminders, delivery };
 }
@@ -200,6 +202,7 @@ export async function reloadCommand(
   const pushed = commitReload(ctx.outbox, events);
   // 使用者主動按 Reload，夜間也即時送出
   await deliverCommand(ctx);
+  renderFolderView(ctx);
   return { planned: events.length, pushed, reload_id: reloadId, cancelled: false };
 }
 
@@ -214,6 +217,7 @@ export async function syncHandler(
   const ctx = createSetUpContext(over);
   const outcome = await syncCommand(ctx, o);
   await deliverCommand(ctx);
+  renderFolderView(ctx);
   return { ctx, outcome };
 }
 

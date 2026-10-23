@@ -37,6 +37,7 @@ import {
 } from './format.js';
 import { formatProgress, formatSummary, runLogin, runSetup, summaryExtras } from './setup.js';
 import { pendingSummaries, writeSummary } from '../summaries/summaries.js';
+import { renderFolderView } from '../folder/folder.js';
 
 const write = (s: string): void => void process.stdout.write(`${s}\n`);
 const warn = (s: string): void => void process.stderr.write(`${s}\n`);
@@ -290,7 +291,9 @@ summaries
       process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
       process.stdin.on('error', reject);
     });
-    const r = writeSummary(createSetUpContext(), { target_id: targetId, source_hash: o.hash, text, agent: o.agent });
+    const ctx = createSetUpContext();
+    const r = writeSummary(ctx, { target_id: targetId, source_hash: o.hash, text, agent: o.agent });
+    renderFolderView(ctx);
     out(o.json, r, () => `已寫入摘要 ${r.target_id}，今天還可以寫 ${r.remaining_today} 則`);
   });
 
@@ -299,11 +302,13 @@ program
   .description('標記小組作業「隊員已交」（只能由本人在互動終端操作）')
   .option('--undo', '取消標記')
   .action((itemId: string, o: { undo?: boolean }) => {
-    const r = markTeammateCommand(createSetUpContext(), {
+    const ctx = createSetUpContext();
+    const r = markTeammateCommand(ctx, {
       itemId,
       ...(o.undo ? { undo: true } : {}),
       isTTY: Boolean(process.stdin.isTTY),
     });
+    renderFolderView(ctx);
     write(r.completion === 'pending' ? `已取消標記 ${r.id}` : `已標記 ${r.id} 為隊員已交`);
   });
 

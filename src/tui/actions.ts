@@ -5,6 +5,7 @@ import { DEFAULT_CONFIG, saveConfig, type Config, type UpdateFrequency } from '.
 import { CliExit, reloadSettings, rulesPath, type CliContext } from '../cli/context.js';
 import { formatValidation, validateRules } from '../cli/commands/rules.js';
 import { listItems, setCompletion } from '../db/repo.js';
+import { renderFolderView } from '../folder/folder.js';
 import { DEFAULT_RULES, type Rule } from '../rules/engine.js';
 import { parseRulesYaml, stringifyRules } from '../rules/yaml.js';
 import { webhookUrlError } from '../events/dispatch.js';
@@ -181,6 +182,8 @@ export function applyChanges(ctx: CliContext, changes: Change[]): { applied: num
   if (cfgDirty) saveConfig(cfg, ctx.root);
   if (rulesDirty) writeRules(ctx, rules);
   reloadSettings(ctx);
+  // 介面內不輸出到終端，失敗時靜默略過
+  renderFolderView(ctx, () => undefined);
   return { applied, skipped };
 }
 
@@ -306,4 +309,5 @@ export function applyInterfaces(ctx: CliContext, folder: boolean): void {
   updateConfig(ctx, (cfg) => {
     cfg.interfaces = { terminal: true, folder, web: false, desktop: false };
   });
+  renderFolderView(ctx, () => undefined);
 }
