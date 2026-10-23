@@ -126,6 +126,7 @@
 - 讀取帳號、密碼、cookie 或 session 檔案。
 - 觸發登入（`ilearn login`、`ilearn setup`）。登入過期時請使用者自己處理。
 - 安裝或移除背景服務（`ilearn service install`、`uninstall` 在非互動終端會被拒絕）。
+- 更新程式（`ilearn update` 在非互動終端會被拒絕）；有新版本時提醒使用者自己更新。
 - 開啟 `ilearn ui` 代為操作。這是給使用者本人的介面，在非互動終端執行會被拒絕；需要修改設定時請提醒使用者自己開啟。
 - 直接連線 iLearn 或修改 iLearn 上的任何資料。
 

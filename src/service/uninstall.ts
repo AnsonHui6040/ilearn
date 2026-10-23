@@ -11,6 +11,8 @@ export interface UninstallPlan {
   programDir: string;
   /** 只有預設安裝位置 ~/thu-ilearn 且確實是 thu-ilearn 套件時才刪除程式資料夾 */
   deleteProgramDir: boolean;
+  /** npm 全域安裝的程式資料夾由 npm rm -g 移除 */
+  npmManaged: boolean;
   lines: string[];
 }
 
@@ -32,13 +34,15 @@ export function planUninstall(o: {
   if (o.removeData && (dataRoot === resolve(o.home) || dataRoot === resolve('/') || resolve(o.home).startsWith(`${dataRoot}/`))) {
     throw new CliExit(1, `資料夾位置 ${dataRoot} 不安全，不會刪除`);
   }
-  const deleteProgramDir = resolve(o.programDir) === resolve(o.home, 'thu-ilearn') && o.isPackage(o.programDir);
+  const npmManaged = /[\\/]node_modules[\\/]thu-ilearn[\\/]?$/.test(o.programDir);
+  const deleteProgramDir = !npmManaged && resolve(o.programDir) === resolve(o.home, 'thu-ilearn') && o.isPackage(o.programDir);
   const lines = ['移除背景服務'];
   if (o.removeData) lines.push('刪除登入資料與 Keychain 中的密碼', `刪除資料夾 ${dataRoot}（包括已下載的教材）`);
   lines.push('移除 ilearn 指令（npm rm -g thu-ilearn）');
-  lines.push(deleteProgramDir ? `刪除程式資料夾 ${o.programDir}` : `程式資料夾 ${o.programDir} 不是預設安裝位置，請自行刪除`);
+  if (npmManaged) lines.push('程式資料夾由 npm rm -g 一併移除');
+  else lines.push(deleteProgramDir ? `刪除程式資料夾 ${o.programDir}` : `程式資料夾 ${o.programDir} 不是預設安裝位置，請自行刪除`);
   if (!o.removeData) lines.push(`保留資料夾 ${dataRoot}（設定、資料庫、已下載的教材與登入資料）`);
-  return { removeData: o.removeData, dataRoot, programDir: o.programDir, deleteProgramDir, lines };
+  return { removeData: o.removeData, dataRoot, programDir: o.programDir, deleteProgramDir, npmManaged, lines };
 }
 
 /** 逐步執行；某一步失敗時記下原因並繼續其他步驟。 */
@@ -60,7 +64,7 @@ export async function runUninstall(plan: UninstallPlan, deps: UninstallDeps): Pr
   const npm = deps.run('npm', ['rm', '-g', 'thu-ilearn']);
   out.push(npm.code === 0 ? '已移除 ilearn 指令' : `移除 ilearn 指令失敗：${npm.stderr.trim() || `exit code ${npm.code}`}，請自行執行 npm rm -g thu-ilearn`);
   if (plan.deleteProgramDir) await step(`已刪除程式資料夾 ${plan.programDir}`, '刪除程式資料夾失敗', () => deps.removeDir(plan.programDir));
-  else out.push(`請自行刪除程式資料夾 ${plan.programDir}`);
+  else if (!plan.npmManaged) out.push(`請自行刪除程式資料夾 ${plan.programDir}`);
   out.push('thu-ilearn 已完全移除');
   return out;
 }

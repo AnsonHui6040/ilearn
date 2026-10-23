@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { dataRoot } from '../config/paths.js';
+import { currentVersion } from '../update/update.js';
 import {
   ackCommand,
   announcementsCommand,
@@ -79,7 +80,7 @@ function contextFactory(over: Partial<ContextOverrides>): { open: () => CliConte
 export function createMcpServer(over: Partial<ContextOverrides> = {}): McpServer {
   const root = over.root ?? dataRoot();
   const ctxs = contextFactory(over);
-  const server = new McpServer({ name: 'thu-ilearn', version: '0.1.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'thu-ilearn', version: currentVersion() }, { instructions: INSTRUCTIONS });
 
   const run = (fn: (ctx: CliContext) => unknown): ToolResult => {
     let ctx: CliContext | null = null;

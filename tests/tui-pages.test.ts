@@ -233,6 +233,14 @@ describe('5 系統設定 actions', () => {
     expect(acts(10)).toContainEqual({ run: 'updateApply' });
   });
 
+  it('warns when the service runs another copy and offers to reinstall', () => {
+    const ctx = seeded();
+    const d = { ...loadTuiData(ctx), service: { installed: true, method: 'launchd' as const, detail: '已安裝（LaunchAgent），但執行的是另一份程式：/Users/a/thu-ilearn/dist/cli/index.js', target: '/Users/a/thu-ilearn/dist/cli/index.js', mismatch: true } };
+    const right = buildPage({ ...onTab(5), cursor: [9, 0] }, d, 100, sources(ctx)).panes[1] ?? [];
+    expect(right.map((r) => r.text).join('\n')).toContain('執行的是另一份程式');
+    expect(right.find((r) => r.text.includes('重新安裝背景服務'))?.activate).toEqual({ run: 'serviceInstall' });
+  });
+
   it('offers complete removal as the last item', () => {
     expect(acts(12)).toContainEqual({ run: 'uninstallAll' });
   });

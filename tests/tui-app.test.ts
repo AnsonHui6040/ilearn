@@ -89,7 +89,7 @@ const fakeRemoval = () => {
   const calls: { removeData: boolean }[] = [];
   return {
     calls,
-    plan: (removeData: boolean) => ({ removeData, dataRoot: '/d', programDir: '/p', deleteProgramDir: true, lines: ['移除背景服務'] }),
+    plan: (removeData: boolean) => ({ removeData, dataRoot: '/d', programDir: '/p', deleteProgramDir: true, npmManaged: false, lines: ['移除背景服務'] }),
     execute: async (plan: { removeData: boolean }) => (calls.push({ removeData: plan.removeData }), ['thu-ilearn 已完全移除']),
   };
 };
