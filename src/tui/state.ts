@@ -17,10 +17,11 @@ export type Prompt =
   | { kind: 'courseRuleAction'; courseId: string; ruleId: string }
   | { kind: 'editRule'; ruleId: string | null }
   | { kind: 'delivery' }
-  | { kind: 'interfaces' };
+  | { kind: 'interfaces' }
+  | { kind: 'updateFrequency' };
 
 /** 需要暫時離開全螢幕執行的動作。 */
-export type RunKind = 'sync' | 'login' | 'logout' | 'serviceInstall' | 'serviceUninstall' | 'uninstallAll';
+export type RunKind = 'sync' | 'login' | 'logout' | 'serviceInstall' | 'serviceUninstall' | 'uninstallAll' | 'updateCheck' | 'updateApply';
 
 export type OpenTarget = { kind: 'url'; url: string } | { kind: 'file'; path: string };
 

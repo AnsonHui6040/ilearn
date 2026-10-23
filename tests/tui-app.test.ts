@@ -96,6 +96,7 @@ const fakeRemoval = () => {
 
 const deps = (over: Partial<Parameters<typeof runUi>[2]> = {}) => ({
   prompts: noPrompts,
+  updater: { check: async () => '已檢查', apply: async () => '已更新' },
   service: fakeService(),
   removal: fakeRemoval(),
   opener: () => ({ ok: true, message: '已開啟' }),
@@ -377,8 +378,41 @@ describe('background service', () => {
   });
 });
 
+describe('system update', () => {
+  const toUpdate = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter'] as const; // 系統更新
+
+  it('changes how often updates are checked', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const prompts: PromptDeps = { ...noPrompts, select: (() => Promise.resolve('weekly')) as PromptDeps['select'] };
+    const done = runUi(ctx, t, deps({ prompts }));
+    await tick();
+    for (const k of [...toUpdate, 'enter'] as const) t.press(k);
+    for (let i = 0; i < 5; i++) await tick();
+    expect(ctx.config.updates.check).toBe('weekly');
+    expect(last(t)).toContain('自動檢查：每星期');
+    t.press('q');
+    await done;
+  });
+
+  it('runs the check and the update from the settings page', async () => {
+    const { ctx } = seeded();
+    const t = fakeTerm();
+    const done = runUi(ctx, t, deps());
+    await tick();
+    for (const k of [...toUpdate, 'down', 'enter'] as const) t.press(k);
+    for (let i = 0; i < 5; i++) await tick();
+    expect(last(t)).toContain('已檢查');
+    for (const k of ['down', 'enter'] as const) t.press(k);
+    for (let i = 0; i < 5; i++) await tick();
+    expect(last(t)).toContain('已更新');
+    t.press('q');
+    await done;
+  });
+});
+
 describe('complete removal', () => {
-  const toRemoval = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const; // 完全移除
+  const toRemoval = ['5', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'down', 'enter', 'enter'] as const; // 完全移除
 
   it('removes the program after typing the confirmation and closes the UI', async () => {
     const { ctx } = seeded();

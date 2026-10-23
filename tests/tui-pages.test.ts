@@ -101,6 +101,18 @@ describe('1 首頁', () => {
   });
 });
 
+describe('new version notice', () => {
+  it('appears on the home page only when a newer version is known', () => {
+    const ctx = seeded();
+    const d = loadTuiData(ctx);
+    const home = (update: Parameters<typeof buildPage>[1]['update']) =>
+      (buildPage(onTab(1), { ...d, ...(update ? { update } : {}) }, 100, sources(ctx)).panes[0] ?? []).map((r) => r.text).join('\n');
+    expect(home({ current: '0.1.0', latest: '0.2.0', checkedAt: '2026-10-23T08:00:00.000Z', available: true })).toContain('有新版本 0.2.0（目前 0.1.0），可在系統設定 > 系統更新 更新');
+    expect(home({ current: '0.2.0', latest: '0.2.0', checkedAt: null, available: false })).not.toContain('有新版本');
+    expect(home(undefined)).not.toContain('有新版本');
+  });
+});
+
 describe('2 課程', () => {
   it('shows full codes and rooms, wraps long names and lists each time slot', () => {
     const out = show(seeded(), onTab(2), 100);
@@ -159,7 +171,7 @@ describe('5 系統設定', () => {
   it('never shows the hook command or the webhook address', () => {
     const ctx = seeded();
     ctx.config.delivery = { hook: { enabled: true, command: 'secret-hook-cmd' }, webhook: { enabled: true, url: 'http://127.0.0.1:9/secret-path' } };
-    for (let i = 1; i <= 11; i++) {
+    for (let i = 1; i <= 12; i++) {
       const out = text(show(ctx, { ...onTab(5), cursor: [i, 0] }, 100));
       expect(out).not.toContain('secret-hook-cmd');
       expect(out).not.toContain('secret-path');
@@ -211,8 +223,18 @@ describe('5 系統設定 actions', () => {
     expect(at(true).flatMap((r) => (r.activate ? [r.activate] : []))).toContainEqual({ run: 'serviceUninstall' });
   });
 
+  it('shows the version and offers update actions', () => {
+    const text = rows(10).map((r) => r.text).join('\n');
+    expect(text).toContain('目前版本：');
+    expect(text).toContain('自動檢查：每天');
+    expect(text).toContain('上次檢查：尚未檢查');
+    expect(acts(10)).toContainEqual({ prompt: { kind: 'updateFrequency' } });
+    expect(acts(10)).toContainEqual({ run: 'updateCheck' });
+    expect(acts(10)).toContainEqual({ run: 'updateApply' });
+  });
+
   it('offers complete removal as the last item', () => {
-    expect(acts(11)).toContainEqual({ run: 'uninstallAll' });
+    expect(acts(12)).toContainEqual({ run: 'uninstallAll' });
   });
 
   it('shows whether the folder view is on', () => {

@@ -25,6 +25,12 @@ describe('config', () => {
     expect(loadConfig(dir).period_times).toEqual(THU_PERIOD_TIMES);
   });
 
+  it('checks for updates once a day by default, also for an old config file', () => {
+    expect(DEFAULT_CONFIG.updates).toEqual({ check: 'daily' });
+    writeFileSync(join(dir, 'config.yaml'), 'environment: desktop\n');
+    expect(loadConfig(dir).updates.check).toBe('daily');
+  });
+
   it('saveConfig writes 0600 file in 0700 dir and round-trips', () => {
     const root = join(dir, 'home');
     const cfg = { ...DEFAULT_CONFIG, password_saved: true };

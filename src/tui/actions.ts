@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeSecureFile } from '../config/paths.js';
-import { DEFAULT_CONFIG, saveConfig, type Config } from '../config/config.js';
+import { DEFAULT_CONFIG, saveConfig, type Config, type UpdateFrequency } from '../config/config.js';
 import { CliExit, reloadSettings, rulesPath, type CliContext } from '../cli/context.js';
 import { formatValidation, validateRules } from '../cli/commands/rules.js';
 import { listItems, setCompletion } from '../db/repo.js';
@@ -169,6 +169,13 @@ function updateConfig(ctx: CliContext, fn: (cfg: Config) => void): void {
   fn(cfg);
   saveConfig(cfg, ctx.root);
   reloadSettings(ctx);
+}
+
+export function applyUpdateFrequency(ctx: CliContext, freq: UpdateFrequency): void {
+  if (freq !== 'daily' && freq !== 'weekly' && freq !== 'off') throw new CliExit(1, '檢查頻率只能是每天、每星期或關閉');
+  updateConfig(ctx, (cfg) => {
+    cfg.updates = { check: freq };
+  });
 }
 
 export function applyQuietHours(ctx: CliContext, start: string, end: string): void {

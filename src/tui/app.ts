@@ -14,10 +14,12 @@ import {
   currentProgramDir, isThuIlearnPackage, planUninstall, removeDirRecursive, runUninstall, type UninstallPlan,
 } from '../service/uninstall.js';
 import { homedir } from 'node:os';
+import type { UpdateFrequency } from '../config/config.js';
+import { currentVersion, readUpdateStatus, UPDATE_NOT_READY } from '../update/update.js';
 import { CliExit, reloadSettings, type CliContext } from '../cli/context.js';
 import type { Delivery } from '../types.js';
 import {
-  applyChanges, applyCourseRuleAction, applyDelivery, applyInterfaces, applyQuietHours, applyReminderOffsets,
+  applyChanges, applyCourseRuleAction, applyDelivery, applyInterfaces, applyQuietHours, applyReminderOffsets, applyUpdateFrequency,
   nextRuleId, OFFSET_CHOICES, parseKeywords, previewChanges, previewRule, saveRule,
 } from './actions.js';
 import { courseDetail, loadTuiData, type TuiData } from './data.js';
@@ -47,6 +49,7 @@ export interface UiDeps {
   prompts: PromptDeps;
   service: { status(): ServiceStatus; install(): string; uninstall(): string };
   removal: { plan(removeData: boolean): UninstallPlan; execute(plan: UninstallPlan): Promise<string[]> };
+  updater: { check(): Promise<string>; apply(): Promise<string> };
   opener: (t: OpenTarget) => { ok: boolean; message: string };
   clock: { every(ms: number, fn: () => void): () => void };
   color: boolean;
@@ -131,6 +134,7 @@ export async function defaultDeps(ctx: CliContext): Promise<UiDeps> {
       install: () => `已安裝背景服務：${installService(defaultServiceDeps(), defaultServiceSpec(dataRoot())).detail}`,
       uninstall: () => uninstallService(defaultServiceDeps()),
     },
+    updater: { check: async () => UPDATE_NOT_READY, apply: async () => UPDATE_NOT_READY },
     removal: {
       plan: (removeData) =>
         planUninstall({ removeData, dataRoot: ctx.root, programDir: currentProgramDir(), home: homedir(), isPackage: isThuIlearnPackage }),
@@ -155,7 +159,7 @@ const isPromptExit = (e: unknown): boolean => e instanceof Error && e.name === '
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<void> {
-  const load = (): TuiData => ({ ...loadTuiData(ctx), service: deps.service.status() });
+  const load = (): TuiData => ({ ...loadTuiData(ctx), service: deps.service.status(), update: readUpdateStatus(ctx.root, currentVersion()) });
   let data: TuiData = load();
   let state: TuiState = initialState();
   let busy = false;
@@ -322,6 +326,19 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
       return `截止提醒已改為 ${picked.map(offsetLabel).join('、')}`;
     }
     if (p.kind === 'editRule') return editRule(p.ruleId);
+    if (p.kind === 'updateFrequency') {
+      const freq = await prompts.select<UpdateFrequency>({
+        message: '自動檢查新版本的頻率',
+        choices: [
+          { name: '每天', value: 'daily' },
+          { name: '每星期', value: 'weekly' },
+          { name: '關閉', value: 'off' },
+        ],
+        default: data.config.updates.check,
+      });
+      applyUpdateFrequency(ctx, freq);
+      return '已更新自動檢查頻率';
+    }
     if (p.kind === 'delivery') return editDelivery();
     if (p.kind === 'interfaces') {
       const picked = await prompts.checkbox({
@@ -385,6 +402,8 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
       return '已重新登入';
     }
     if (what === 'uninstallAll') return removeEverything();
+    if (what === 'updateCheck') return deps.updater.check();
+    if (what === 'updateApply') return deps.updater.apply();
     if (what === 'serviceInstall') return deps.service.install();
     if (what === 'serviceUninstall') {
       if (!(await deps.prompts.confirm({ message: '要移除背景服務嗎？之後不會自動同步與提醒', default: false }))) return '沒有移除，背景服務仍在執行';
