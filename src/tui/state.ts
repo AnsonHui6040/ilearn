@@ -20,7 +20,7 @@ export type Prompt =
   | { kind: 'interfaces' };
 
 /** 需要暫時離開全螢幕執行的動作。 */
-export type RunKind = 'sync' | 'login' | 'logout' | 'serviceInstall' | 'serviceUninstall';
+export type RunKind = 'sync' | 'login' | 'logout' | 'serviceInstall' | 'serviceUninstall' | 'uninstallAll';
 
 export type OpenTarget = { kind: 'url'; url: string } | { kind: 'file'; path: string };
 

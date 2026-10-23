@@ -21,9 +21,11 @@ import {
   tasksCommand,
 } from '../src/cli/commands/query.js';
 import { toTaipeiIso } from '../src/time.js';
-import { rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
+import { pickEditor, rulesEditCommand, rulesTestCommand, validateRules } from '../src/cli/commands/rules.js';
 import { reloadCommand, runHandler, runTick, syncCommand, syncHandler } from '../src/cli/commands/sync.js';
 import {
+  PASSWORD_PROMPT,
+  askRemaining,
   askRules,
   askService,
   DEFAULT_WEBHOOK_URL,
@@ -35,6 +37,7 @@ import {
   KEYS_HELP_CHECKBOX,
   KEYS_HELP_SELECT,
   setupDefaults,
+  setupTracker,
   stepHeader,
   summaryExtras,
 } from '../src/cli/setup.js';
@@ -769,5 +772,58 @@ describe('setup background service step', () => {
     out.mockRestore();
     expect(text).toContain('之後可以執行 ilearn service install，或在 ilearn ui 的系統設定安裝');
     expect(text).toContain('載入 LaunchAgent 失敗：boom');
+  });
+});
+
+describe('rules editor choice', () => {
+  it('uses $EDITOR or $VISUAL when set', () => {
+    expect(pickEditor({ EDITOR: 'code -w' }, () => true)).toEqual({ cmd: 'code -w', hint: null });
+    expect(pickEditor({ VISUAL: 'micro' }, () => true)).toEqual({ cmd: 'micro', hint: null });
+  });
+
+  it('defaults to nano with a save and exit hint', () => {
+    expect(pickEditor({}, (c) => c === 'nano')).toEqual({ cmd: 'nano', hint: '編輯器 nano：Ctrl-O 再按 Enter 儲存，Ctrl-X 離開' });
+  });
+
+  it('falls back to vi with its commands when nano is missing', () => {
+    expect(pickEditor({}, () => false)).toEqual({ cmd: 'vi', hint: '編輯器 vi：按 Esc 後輸入 :wq 再按 Enter 儲存並離開，輸入 :q! 放棄' });
+  });
+});
+
+describe('password prompt', () => {
+  it('shows a * for every character typed', () => {
+    expect(PASSWORD_PROMPT).toEqual({ message: 'iLearn 密碼（輸入時以 * 顯示）', mask: '*' });
+  });
+});
+
+describe('setup resumes after an interruption', () => {
+  it('remembers finished steps until setup completes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ilearn-resume-'));
+    const first = setupTracker(root);
+    expect(first.resuming).toBe(false);
+    first.done(1);
+    first.done(2);
+    const second = setupTracker(root);
+    expect(second.resuming).toBe(true);
+    expect(second.completed).toEqual([1, 2]);
+    expect(second.skip(1)).toBe(true);
+    expect(second.skip(4)).toBe(false);
+    second.finish();
+    const third = setupTracker(root);
+    expect(third.resuming).toBe(false);
+    expect(third.skip(1)).toBe(false);
+  });
+
+  it('skips finished steps 4 to 6 without asking again', async () => {
+    const { ctx, root } = mk();
+    const t = setupTracker(root);
+    for (const n of [4, 5, 6]) t.done(n);
+    const resumed = setupTracker(root);
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const never = () => Promise.reject(new Error('should not ask'));
+    await askRemaining(ctx, { checkbox: never, input: never, confirm: never, select: never } as never, setupDefaults(ctx.config, 'desktop'), resumed);
+    const text = out.mock.calls.map((c) => String(c[0])).join('');
+    out.mockRestore();
+    expect(text).toContain('已完成，略過');
   });
 });

@@ -319,7 +319,7 @@ function courseSettingsPage(s: TuiState, d: TuiData): Page {
 
 /* ---------- 5 系統設定 ---------- */
 
-export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', '背景服務', 'Reset'] as const;
+export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', '背景服務', 'Reset', '完全移除'] as const;
 
 function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
   const st = d.status;
@@ -395,6 +395,14 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
           : { text: '  安裝背景服務', key: 'svc', activate: { run: 'serviceInstall' } },
       ];
     }
+    case '完全移除':
+      return [
+        head('完全移除'),
+        dim('  移除背景服務、ilearn 指令與程式資料夾；可以選擇保留或一併刪除 ~/.thu-ilearn 資料夾'),
+        dim('  執行前會列出清單，並要求輸入「確認移除」'),
+        { text: '' },
+        { text: '  完全移除 thu-ilearn', key: 'uninstall-all', style: 'red', activate: { run: 'uninstallAll' } },
+      ];
     default:
       return [head('Reset'), dim('  全部設定回復預設（先備份為 config.yaml.bak、rules.yaml.bak），同步資料、檔案、帳號保留'), { text: '  按 Enter 重設', key: 'reset', activate: { confirm: [{ kind: 'reset' }] } }];
   }

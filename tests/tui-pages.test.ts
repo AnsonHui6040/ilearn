@@ -159,7 +159,7 @@ describe('5 系統設定', () => {
   it('never shows the hook command or the webhook address', () => {
     const ctx = seeded();
     ctx.config.delivery = { hook: { enabled: true, command: 'secret-hook-cmd' }, webhook: { enabled: true, url: 'http://127.0.0.1:9/secret-path' } };
-    for (let i = 1; i <= 10; i++) {
+    for (let i = 1; i <= 11; i++) {
       const out = text(show(ctx, { ...onTab(5), cursor: [i, 0] }, 100));
       expect(out).not.toContain('secret-hook-cmd');
       expect(out).not.toContain('secret-path');
@@ -209,6 +209,10 @@ describe('5 系統設定 actions', () => {
     expect(at(false).map((r) => r.text).join('\n')).toContain('未安裝');
     expect(at(false).flatMap((r) => (r.activate ? [r.activate] : []))).toContainEqual({ run: 'serviceInstall' });
     expect(at(true).flatMap((r) => (r.activate ? [r.activate] : []))).toContainEqual({ run: 'serviceUninstall' });
+  });
+
+  it('offers complete removal as the last item', () => {
+    expect(acts(11)).toContainEqual({ run: 'uninstallAll' });
   });
 
   it('shows whether the folder view is on', () => {
