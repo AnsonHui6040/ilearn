@@ -5,6 +5,8 @@ import { THU_PERIOD_TIMES } from '../domain/schedule.js';
 import type { Delivery } from '../types.js';
 import { dataRoot, writeSecureFile } from './paths.js';
 
+export type UpdateFrequency = 'daily' | 'weekly' | 'off';
+
 export interface Config {
   environment: 'desktop' | 'vps';
   interfaces: { terminal: boolean; folder: boolean; web: boolean; desktop: boolean };
@@ -20,6 +22,8 @@ export interface Config {
   >;
   period_times: Record<string, { start: string; end: string }>;
   password_saved: boolean;
+  /** 自動檢查新版本的頻率 */
+  updates: { check: UpdateFrequency };
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -37,6 +41,7 @@ export const DEFAULT_CONFIG: Config = {
   course_overrides: {},
   period_times: structuredClone(THU_PERIOD_TIMES),
   password_saved: false,
+  updates: { check: 'daily' },
 };
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

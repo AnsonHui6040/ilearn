@@ -21,6 +21,7 @@ import {
   withRule,
   applyCourseRuleAction,
   applyQuietHours,
+  applyUpdateFrequency,
   applyReminderOffsets,
   previewChanges,
 } from '../src/tui/actions.js';
@@ -463,5 +464,19 @@ describe('nextRuleId', () => {
   it('picks the first unused custom id', () => {
     expect(nextRuleId(DEFAULT_RULES)).toBe('custom_1');
     expect(nextRuleId([...DEFAULT_RULES, { ...DEFAULT_RULES[0]!, id: 'custom_1' }, { ...DEFAULT_RULES[0]!, id: 'custom_3' }])).toBe('custom_2');
+  });
+});
+
+describe('update check frequency', () => {
+  it('saves daily, weekly or off', () => {
+    const ctx = mk();
+    applyUpdateFrequency(ctx, 'weekly');
+    expect(loadConfig(ctx.root).updates.check).toBe('weekly');
+    applyUpdateFrequency(ctx, 'off');
+    expect(ctx.config.updates.check).toBe('off');
+  });
+
+  it('rejects other values', () => {
+    expect(() => applyUpdateFrequency(mk(), 'hourly' as never)).toThrow('檢查頻率只能是每天、每星期或關閉');
   });
 });

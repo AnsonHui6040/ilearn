@@ -2,6 +2,7 @@ import type { courseCommand } from '../cli/commands/query.js';
 import type { Rule } from '../rules/engine.js';
 import { displayName, type CourseRow, type TuiData } from './data.js';
 import { TWO_PANE_COLS, type Style } from './frame.js';
+import { toTaipeiIso } from '../time.js';
 import { changeKey, type Change, type Row, type TuiState, type View } from './state.js';
 import { fit, strWidth, wrap } from './text.js';
 
@@ -52,7 +53,11 @@ function ruleName(rules: Rule[], id: string): string {
 /* ---------- 1 首頁 ---------- */
 
 function homePage(s: TuiState, d: TuiData): Page {
-  const rows: Row[] = [head(`需要處理  未完成 ${d.tasks.tasks.length}`)];
+  const rows: Row[] = [];
+  if (d.update?.available) {
+    rows.push(head(`有新版本 ${d.update.latest}（目前 ${d.update.current}），可在系統設定 > 系統更新 更新`), { text: '' });
+  }
+  rows.push(head(`需要處理  未完成 ${d.tasks.tasks.length}`));
   const row = (t: TuiData['home']['overdue'][number], style?: Style): Row => {
     const tick: Change | undefined = t.group && t.kind === 'assignment' ? { kind: 'teammate', itemId: t.id, mark: true } : undefined;
     const flags = [t.group ? '[小組]' : '', t.teammate_hint ? '[隊員可能已交]' : '', t.kind === 'video' ? '[影片]' : ''].join('');
@@ -319,7 +324,7 @@ function courseSettingsPage(s: TuiState, d: TuiData): Page {
 
 /* ---------- 5 系統設定 ---------- */
 
-export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', '背景服務', 'Reset', '完全移除'] as const;
+export const SYSTEM_ITEMS = ['Reload', '同步狀態', '介面啟用', '推送方式', '夜間時段', '截止提醒', '通知規則', '帳號', '背景服務', '系統更新', 'Reset', '完全移除'] as const;
 
 function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
   const st = d.status;
@@ -393,6 +398,20 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         sv?.installed
           ? { text: '  移除背景服務', key: 'svc', activate: { run: 'serviceUninstall' } }
           : { text: '  安裝背景服務', key: 'svc', activate: { run: 'serviceInstall' } },
+      ];
+    }
+    case '系統更新': {
+      const u = d.update;
+      const freq = { daily: '每天', weekly: '每星期', off: '關閉' }[d.config.updates.check];
+      return [
+        head('系統更新'),
+        { text: `  目前版本：${u?.current ?? '無法取得'}` },
+        { text: `  最新版本：${u?.latest ?? '尚未檢查'}${u?.available ? '（可以更新）' : ''}` },
+        { text: `  上次檢查：${u?.checkedAt ? short(toTaipeiIso(new Date(u.checkedAt))) : '尚未檢查'}` },
+        { text: '' },
+        { text: `  自動檢查：${freq}`, key: 'update-freq', activate: { prompt: { kind: 'updateFrequency' } } },
+        { text: '  立即檢查', key: 'update-check', activate: { run: 'updateCheck' } },
+        { text: '  更新', key: 'update-apply', activate: { run: 'updateApply' } },
       ];
     }
     case '完全移除':
