@@ -16,26 +16,35 @@
 
 - Node.js 22.13 以上
 - 東海大學學號與 iLearn 密碼
+- macOS 或 Linux。Windows 尚未測試。
+
+目前為測試版（0.x），設定精靈中的「教材檔案摘要」與「老師公告摘要」尚未提供，選擇會保留到功能推出。
 
 ## 安裝
 
-目前尚未發布到 npm，請從 GitHub 安裝：
-
 ```sh
-git clone https://github.com/AnsonHui6040/ilearn.git ~/thu-ilearn
-cd ~/thu-ilearn
-npm ci
-npm run build
-npm link
+npm install -g thu-ilearn
 ```
 
-`npm link` 會建立 `ilearn` 指令；不連結時改用 `node ~/thu-ilearn/dist/cli/index.js`。
+如果出現權限錯誤（`EACCES`），不要使用 `sudo`，請改用 Homebrew、nvm 或 fnm 安裝的 Node.js。
 
 安裝後執行設定精靈：
 
 ```sh
 ilearn setup
 ```
+
+### 由 git 安裝改為 npm 安裝
+
+之前用 `git clone` 安裝到 `~/thu-ilearn` 的話：
+
+```sh
+npm install -g thu-ilearn
+ilearn service install
+ilearn service status
+```
+
+`ilearn service status` 沒有出現「執行的是另一份程式」的提示後，就可以刪除 `~/thu-ilearn`。設定與資料都在 `~/.thu-ilearn`，不受影響。
 
 ## 交給 AI agent 安裝
 
@@ -47,15 +56,12 @@ ilearn setup
 請幫我在這台電腦安裝 thu-ilearn（東海大學 iLearn 同步工具，原始碼：https://github.com/AnsonHui6040/ilearn ）。
 
 1. 執行 node -v，確認版本為 22.13 以上；不符合就停下來告訴我，不要自行更換 Node 版本。
-2. 執行：
-   git clone https://github.com/AnsonHui6040/ilearn.git ~/thu-ilearn
-   cd ~/thu-ilearn && npm ci && npm run build && npm link
-   如果 npm link 因權限失敗，不要使用 sudo，把錯誤訊息告訴我。
+2. 執行 npm install -g thu-ilearn。如果因權限失敗，不要使用 sudo，把錯誤訊息告訴我。
 3. 執行 ilearn --version 確認指令可用。
 4. 停下來，請我自己在終端執行 ilearn setup。設定精靈會要求輸入學號與密碼，你不可以代為輸入，也不可以讀取或保存我的帳號密碼。等我回覆「設定完成」再繼續。
 5. 把 thu-ilearn 加入你的 MCP 設定：名稱 thu-ilearn，指令 ilearn，參數 mcp。Claude Code 可以執行 claude mcp add thu-ilearn -- ilearn mcp。
 6. 設定精靈最後會詢問是否安裝背景服務。如果我沒有安裝，提醒我自己執行 ilearn service install（需要互動終端，你不可以代為安裝），再用 ilearn service status 確認。
-7. 閱讀 ~/thu-ilearn/AGENTS.md，了解指令、事件格式與權限。如果你支援 Skill，把 ~/thu-ilearn/SKILL.md 加入你的 skill。
+7. 執行 npm root -g 找到安裝位置，閱讀其中的 thu-ilearn/AGENTS.md，了解指令、事件格式與權限。如果你支援 Skill，把同一資料夾的 SKILL.md 加入你的 skill。
 8. 執行 ilearn status --json 與 ilearn tasks --json，用三到五行告訴我同步狀態與未完成的作業數量。
 
 之後的規則：
@@ -69,7 +75,7 @@ ilearn setup
 先完成上面的安裝，讓 `ilearn` 指令在 agent 所在的機器可用，再把下面的提示詞交給你的 agent。
 
 ```text
-你要負責把我的東海大學 iLearn 通知轉告給我。這台機器已經安裝 thu-ilearn，指令為 ilearn。先閱讀 ~/thu-ilearn/AGENTS.md。
+你要負責把我的東海大學 iLearn 通知轉告給我。這台機器已經安裝 thu-ilearn，指令為 ilearn。先執行 npm root -g 找到安裝位置，閱讀其中的 thu-ilearn/AGENTS.md。
 
 接收通知（二選一）：
 A. 每 5 分鐘執行 ilearn events --deliverable --agent hermes --json，逐則處理後執行 ilearn events ack hermes <event_id>。
@@ -132,17 +138,15 @@ ilearn update --check   # 只檢查
 ilearn update           # 更新到最新版本（只能在互動終端執行）
 ```
 
-以 npm 安裝時，更新會執行 `npm install -g thu-ilearn@<最新版本>`，背景服務不必重新安裝。以 git 安裝時請在程式資料夾執行：
+更新會執行 `npm install -g thu-ilearn@<最新版本>`，背景服務不必重新安裝。從原始碼安裝時請在程式資料夾執行：
 
 ```sh
 cd ~/thu-ilearn && git pull && npm ci && npm run build
 ```
 
-由 git 安裝改為 npm 安裝後，請重新執行 `ilearn service install`；`ilearn service status` 會提示背景服務是否仍在執行舊的那一份程式。
-
 ## 解除安裝
 
-在 `ilearn ui` 的「系統設定 > 完全移除」可以選擇只移除程式（保留 `~/.thu-ilearn` 資料夾），或連同資料夾、已下載的教材與登入資料一併刪除。執行前會列出清單並要求輸入 `confirm`。程式資料夾只有在預設位置 `~/thu-ilearn` 時才會自動刪除。
+在 `ilearn ui` 的「系統設定 > 完全移除」可以選擇只移除程式（保留 `~/.thu-ilearn` 資料夾），或連同資料夾、已下載的教材與登入資料一併刪除。執行前會列出清單並要求輸入 `confirm`。程式本身以 `npm rm -g thu-ilearn` 移除；從原始碼安裝時，程式資料夾只有在預設位置 `~/thu-ilearn` 時才會自動刪除。
 
 | 系統 | 排程方式 |
 | --- | --- |
@@ -257,8 +261,19 @@ MCP 客戶端設定範例：
 
 ## 開發
 
+從原始碼安裝：
+
 ```sh
-npm install
+git clone https://github.com/AnsonHui6040/ilearn.git ~/thu-ilearn
+cd ~/thu-ilearn
+npm ci
+npm run build
+npm link
+```
+
+`npm link` 會建立 `ilearn` 指令；不連結時改用 `node ~/thu-ilearn/dist/cli/index.js`。
+
+```sh
 npm run typecheck
 npm run lint
 npm test
