@@ -399,7 +399,7 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
       return [
         head('完全移除'),
         dim('  移除背景服務、ilearn 指令與程式資料夾；可以選擇保留或一併刪除 ~/.thu-ilearn 資料夾'),
-        dim('  執行前會列出清單，並要求輸入「確認移除」'),
+        dim('  執行前會列出清單，並要求輸入 confirm'),
         { text: '' },
         { text: '  完全移除 thu-ilearn', key: 'uninstall-all', style: 'red', activate: { run: 'uninstallAll' } },
       ];

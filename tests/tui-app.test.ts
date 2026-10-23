@@ -387,7 +387,7 @@ describe('complete removal', () => {
     const prompts: PromptDeps = {
       ...noPrompts,
       select: (() => Promise.resolve('program')) as PromptDeps['select'],
-      input: () => Promise.resolve('確認移除'),
+      input: () => Promise.resolve('confirm'),
     };
     const done = runUi(ctx, t, deps({ prompts, removal }));
     await tick();
