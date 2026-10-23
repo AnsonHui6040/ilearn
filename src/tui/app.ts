@@ -365,8 +365,8 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
     if (choice === 'cancel') return cancelled;
     const plan = deps.removal.plan(choice === 'all');
     term.write(`\r\n將會：\r\n${plan.lines.map((l) => `  ${l}`).join('\r\n')}\r\n\r\n`);
-    const typed = await deps.prompts.input({ message: '請輸入「確認移除」繼續，其他內容即取消' });
-    if (typed.trim() !== '確認移除') return cancelled;
+    const typed = await deps.prompts.input({ message: '請輸入 confirm 繼續，其他內容即取消' });
+    if (typed.trim() !== 'confirm') return cancelled;
     const results = await deps.removal.execute(plan);
     term.write(`${results.join('\r\n')}\r\n`);
     quitAfter = true;
