@@ -1,6 +1,6 @@
 # npm 發布前檢查清單
 
-日期：2026-10-23。狀態：尚未發布。發布由使用者本人執行（`npm login`、`npm publish`），agent 不代為發布。
+日期：2026-10-23。狀態：`thu-ilearn@0.1.0` 已於 2026-10-24 01:16（台北時間）發布。發布由使用者本人執行（`npm login`、`npm publish`），agent 不代為發布。
 
 ## 目前狀態
 
@@ -37,11 +37,12 @@
 
 ## 發布後立即驗證
 
-- [ ] `npm view thu-ilearn version` 顯示剛發布的版本
-- [ ] 在乾淨位置安裝：`npm install -g thu-ilearn`，`ilearn --version` 正確
-- [ ] `ilearn update --check` 能連到真正的 npm（「已是最新版本」）
+- [x] `npm view thu-ilearn` 顯示 0.1.0，`latest` 指向 0.1.0，108 個檔案、766.9 kB，`bin` 為 `ilearn`
+- [x] 在暫存的 npm prefix 安裝 `thu-ilearn`，`ilearn --version` 為 0.1.0；`ilearn status --json` 正常；`ilearn service status` 正確提示背景服務仍指向 `~/thu-ilearn`
+- [x] `ilearn update --check --json` 連到真正的 npm：`latest` 0.1.0、`available` false
 - [ ] 發布 `0.1.1` 小改版，確認舊版 `ilearn update` 能更新、背景服務繼續執行
-- [ ] git tag 對應版本號
+- [ ] git tag `v0.1.0` 對應版本號
+- [ ] 第一個新套件會先出現 `0.0.0-stage` 佔位版本（npm staged publishing），可用 `npm deprecate thu-ilearn@0.0.0-stage "發布流程產生的佔位版本，請安裝最新版"` 標示
 
 ## 待使用者決定
 
