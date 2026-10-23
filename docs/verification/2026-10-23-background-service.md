@@ -38,7 +38,21 @@
 
 | 項目 | 狀態 |
 | --- | --- |
-| macOS 執行 `ilearn service install` 後 `launchctl print gui/<uid>/thu-ilearn.run` 正常，5 分鐘內 `logs/run.log` 有紀錄 | TBD |
+| macOS 執行 `ilearn service install` 後 `ilearn service status` 為「已安裝（LaunchAgent）」，每 5 分鐘在 `logs/run.log` 留下紀錄 | PASS（使用者 2026-10-23 安裝，14:11 至 14:31 每 5 分鐘一筆） |
+| 背景服務在 session 過期後自動以已保存密碼重新登入 | 修正後 TBD（見下方） |
 | 重開機或睡眠喚醒後繼續執行 | TBD |
 | `ilearn ui` 安裝、移除背景服務 | TBD |
 | Linux systemd、crontab 與 Windows 工作排程器 | TBD（尚未在這些系統測試） |
+
+## 真機發現的問題：session 過期未自動重新登入
+
+使用者安裝背景服務後，`run.log` 每 5 分鐘出現「Unexpected token '<', "<!DOCTYPE "... is not valid JSON」，`last_sync_at` 停在 00:40。
+
+| 層 | 實際情況 |
+| --- | --- |
+| iLearn API（無有效 session） | 302 轉址到 `tcidentity.thu.edu.tw` 的 CAS 登入頁（以不帶 cookie 的請求實測） |
+| HTTP 層 | 跟隨轉址，最後得到 200 的 HTML |
+| API 層 | 當成 JSON 解析而失敗 |
+| 自動重新登入 | 只在 401 時觸發，因此沒有觸發，也沒有推送 `auth.expired` |
+
+修正：API 請求被轉到 CAS 登入頁時視為 401（`src/ilearn/api.ts`）。測試 `ilearn.test.ts` expired session；以不帶 cookie 的請求實測，`activeSemesterCode()` 回傳 `ApiError 401`。下載轉到 `tcmedia.thu.edu.tw` 不受影響。

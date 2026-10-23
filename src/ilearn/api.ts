@@ -118,12 +118,27 @@ export interface IlearnApi {
   downloadUpload(uploadId: number): Promise<Response>;
 }
 
+/** 學校 CAS（tcidentity）的登入頁網址。 */
+function isLoginPage(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.hostname === 'tcidentity.thu.edu.tw' || u.pathname.includes('/protocol/cas/login');
+  } catch {
+    return false;
+  }
+}
+
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 
 export function createApi(http: HttpClient, base = 'https://ilearn.thu.edu.tw'): IlearnApi {
   async function raw(path: string): Promise<Response> {
     const res = await http.get(base + path);
+    // session 過期時 iLearn 不回 401，而是轉址到學校 CAS 登入頁
+    if (isLoginPage(res.url)) {
+      await res.body?.cancel();
+      throw new ApiError(401, path);
+    }
     if (res.status < 200 || res.status >= 300) {
       await res.body?.cancel();
       throw new ApiError(res.status, path);

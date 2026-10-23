@@ -255,3 +255,36 @@ describe('courseInfo', () => {
     expect(parseCourseView('<html><body>x</body></html>')).toEqual({ schedule: [], rawScheduleText: '', grading: [] });
   });
 });
+
+describe('expired session', () => {
+  const CAS = 'https://tcidentity.thu.edu.tw/auth/realms/thu/protocol/cas/login?service=https%3A//ilearn.thu.edu.tw/api/semesters';
+  /** 模擬真實 fetch：Response.url 為該次請求的網址。 */
+  const at = (url: string, res: Response): Response => Object.defineProperty(res, 'url', { value: url });
+  const apiFor = (routes: Record<string, () => Response>) =>
+    createApi(createHttp({
+      fetchImpl: (async (input: string | URL | Request) => {
+        const url = String(input);
+        const r = routes[url];
+        return at(url, r ? r() : new Response('nf', { status: 404 }));
+      }) as typeof fetch,
+    }));
+
+  it('treats a redirect to the CAS login page as 401 so the saved password can log in again', async () => {
+    const api = apiFor({
+      'https://ilearn.thu.edu.tw/api/semesters': () => redirect(CAS),
+      [CAS]: () => html('<!DOCTYPE html><form id="kc-form-login"></form>'),
+    });
+    await expect(api.activeSemesterCode()).rejects.toMatchObject({ name: 'ApiError', status: 401 });
+  });
+
+  it('still follows a download redirect to the media host', async () => {
+    const media = 'https://tcmedia.thu.edu.tw/files/1.pdf';
+    const api = apiFor({
+      'https://ilearn.thu.edu.tw/api/uploads/1/blob': () => redirect(media),
+      [media]: () => new Response('%PDF', { status: 200, headers: { 'content-type': 'application/pdf' } }),
+    });
+    const res = await api.downloadUpload(1);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('%PDF');
+  });
+});
