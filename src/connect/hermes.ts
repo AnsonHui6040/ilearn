@@ -146,13 +146,17 @@ export function displayArgs(args: string[]): string {
 
 const nameRe = (n: string): RegExp => new RegExp(`(^|[^\\w-])${n.replace(/[-.]/g, '\\$&')}(?![\\w-])`);
 
-/** hermes profile list：標有 * 的那一行是目前使用的 profile；default 代表不指定。 */
+/**
+ * hermes profile list：目前使用的 profile 以標記表示。舊版文件是行尾或行首的 *，
+ * v0.15.1 實際輸出是表格，第一欄前面加 ◆；default 代表不指定。
+ */
+const ACTIVE_MARKS = /^[*◆●▶►]+|[*◆●▶►]+$/g;
 export function detectActiveProfile(r: RunResult): string {
   if (r.code !== 0) return '';
   for (const raw of r.stdout.split('\n')) {
     const line = raw.trim();
-    if (!line.startsWith('*') && !line.endsWith('*')) continue;
-    const name = line.replace(/^\*+|\*+$/g, '').trim().split(/\s+/)[0] ?? '';
+    if (!/^[*◆●▶►]/.test(line) && !/[*◆●▶►]$/.test(line)) continue;
+    const name = line.replace(ACTIVE_MARKS, '').trim().split(/\s+/)[0] ?? '';
     if (name === 'default') return '';
     return PROFILE_RE.test(name) ? name : '';
   }

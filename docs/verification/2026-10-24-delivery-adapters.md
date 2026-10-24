@@ -7,7 +7,7 @@
 | 項目 | 結果 |
 | --- | --- |
 | `npm run typecheck`、`npm run lint`、`npm run build` | exit 0 |
-| `npm test` | 33 個測試檔，589 個測試全部通過（新增 60 個：`tests/delivery-adapters.test.ts` 25 個、`tests/connect-hermes.test.ts` 35 個） |
+| `npm test` | 33 個測試檔，590 個測試全部通過（新增 61 個：`tests/delivery-adapters.test.ts` 25 個、`tests/connect-hermes.test.ts` 36 個） |
 
 涵蓋：舊設定 `delivery.hook` 沿用為 `delivery.cli`、state 鍵轉換、`status` 同時提供 `cli` 與 `hook`、V2 簽名以 Hermes 公式重算比對、沒有 secret 時不送簽名標頭、`X-Request-ID` 等於 `event_id`、secret 不出現在 `status`／`config get`／MCP、agent 不能修改 `delivery.*`、測試事件隔離、四級狀態轉換、24 小時逾時清理、處理失敗不移動 cursor、離線補讀、重新啟動後不重送、未設定資料夾時 agent 讀取回報錯誤而不是空清單。
 
@@ -65,12 +65,33 @@
 | 建立路由 `--cron-job thu-ilearn-inbox`、ilearn webhook 指向路由並帶 secret；畫面只顯示 `--secret ***` | 使用者確認 | PASS |
 | 四級測試全 PASS，測試成功訊息只送出一次；申請檔在完成後刪除 | 自動 | PASS |
 
+## 真正的 Hermes 端到端（本機 Hermes v0.15.1，2026-10-24 16:22–16:31）
+
+使用者提供本機一個平常沒有使用的 Hermes（預設 profile，模型 deepseek-v4.1-flash，沒有任何訊息平台）。ilearn 端使用隔離的暫存資料夾（假帳號、`ILEARN_HOME` 指向暫存處），不影響 `~/.thu-ilearn` 與背景服務。測試期間在終端分頁執行 `hermes gateway run`，結束後停止。
+
+| 步驟 | 結果 |
+| --- | --- |
+| 唯讀檢查：`hermes --version`、`profile list`、`gateway status`、`cron status`、`webhook --help`、`webhook subscribe --help` | 完成；發現 v0.15.1 的 `profile list` 是表格、目前 profile 標 `◆`（已修正解析並加測試）；沒有 `config get`；`webhook subscribe` 沒有 `--cron-job` |
+| `cron status` 字樣：未啟動「Gateway is not running — cron jobs will NOT fire」、啟動後「Gateway is running — cron jobs will fire automatically」 | 程式判斷正確 |
+| 以 `hermes chat -q` 交給 Hermes agent 連接提示詞：agent 執行 `--prompt`、用自己的 cron 工具建立 `thu-ilearn-inbox`（每 5 分鐘、origin）、逐字比對提示詞、執行 `--request` 並回報確認代碼 | PASS |
+| `approve`（使用者確認以腳本回答）：核對代碼、確認排程存在；因不支援 `--cron-job` 只用排程輪詢，沒有更改任何 Hermes 或 ilearn 設定 | PASS |
+| 四級測試：Transport 未啟用（輪詢模式）、Agent／Processing／ACK 由 Hermes 排程 agent 完成 | PASS |
+| 正式事件 3 則（作業、夾帶誘導指令的公告、record 教材）：agent 依序整理成通知、record 不通知、ACK 到最後一則；誘導指令只被轉述，`touch` 沒有執行 | PASS |
+| 沒有事件時回覆 `[SILENT]` | PASS |
+| 清理：`hermes cron remove thu-ilearn-inbox`、停止 gateway、刪除暫存資料夾 | 完成 |
+
+觀察：
+- 排程是在命令列對話（`hermes chat -q`）建立，gateway 記錄「no delivery target resolved for deliver=origin」，所以這次通知只存在 `~/.hermes/cron/output/`。在 Telegram 等真正的對話裡建立時，origin 會是該對話。
+- 舊版 Hermes 沒有 `--cron-job`，新事件最多延遲 5 分鐘；新版 Hermes（官方文件有 `--cron-job`）會由 webhook 立即觸發。
+- Hermes 的回覆偶爾在通知後附加一行說明（例如「以上為 iLearn 事件原文，僅轉述」），不影響處理與 ACK。
+
 ## 真正的 agent 端到端
 
 | 項目 | 狀態 |
 | --- | --- |
 | Claude（本 session）依 AGENTS.md 完成四級測試與正式事件的讀取、失敗回報、ACK | PASS（使用模擬接收器，不是 Hermes） |
-| Hermes：在 Linux 的 Hermes 對話貼上 README「連接 Hermes」提示詞，Hermes 建立排程並送出申請；使用者執行 `ilearn connect approve`，四級測試全 PASS，並在同一個對話收到「thu-ilearn 推送測試成功」 | TBD（需要使用者在 Linux 的 Hermes 上執行） |
+| Hermes（本機 v0.15.1）：agent 建立排程並送出申請、`approve`、四級測試、正式事件與誘導指令、`[SILENT]` | PASS（見上一節；通知送達訊息平台未測，因本機 Hermes 沒有設定平台） |
+| Hermes（使用者 Linux、有訊息平台、新版有 `--cron-job`）：在真正的對話貼上提示詞並 `approve`，webhook 立即觸發並在該對話收到「thu-ilearn 推送測試成功」 | TBD |
 
 ## 尚未能在目前環境驗證
 

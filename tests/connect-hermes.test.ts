@@ -581,6 +581,18 @@ describe('connect approve', () => {
 });
 
 describe('connect hermes: 預設值偵測', () => {
+  it('detectActiveProfile reads the ◆ table format of hermes v0.15.1', () => {
+    const table = [
+      '',
+      ' Profile          Model                        Gateway      Alias        Distribution',
+      ' ───────────────    ───────────────────────────    ───────────    ───────────    ────────────────────',
+      ' ◆default         deepseek/deepseek-v4.1-fla   stopped      —            —',
+      '  agentdesigner   qwen3.6:27b-mlx              stopped      agentdesigner —',
+    ].join('\n');
+    expect(detectActiveProfile(ok(table))).toBe('');
+    expect(detectActiveProfile(ok(table.replace(' ◆default', '  default').replace('  agentdesigner', ' ◆agentdesigner')))).toBe('agentdesigner');
+  });
+
   it('detectActiveProfile reads the starred line; default means no profile', () => {
     expect(detectActiveProfile(ok('  default\n  work *\n'))).toBe('work');
     expect(detectActiveProfile(ok('* daily  ready\n'))).toBe('daily');
