@@ -58,7 +58,7 @@ describe('MCP server', () => {
     const { tools } = await c.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...MCP_TOOLS].sort());
     for (const t of tools) {
-      expect(t.annotations?.readOnlyHint, t.name).toBe(!['events_ack', 'summaries_write', 'config_set', 'rules_add'].includes(t.name));
+      expect(t.annotations?.readOnlyHint, t.name).toBe(!['events_ack', 'events_report', 'delivery_test', 'summaries_write', 'config_set', 'rules_add'].includes(t.name));
       expect(t.annotations?.destructiveHint ?? false, t.name).toBe(false);
     }
   });

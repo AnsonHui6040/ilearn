@@ -95,15 +95,15 @@ export interface TickResult {
   delivery: Record<Channel, DispatchResult>;
 }
 
-const CHANNEL_NAME: Record<Channel, string> = { hook: '本機指令 hook', webhook: '本機 webhook' };
+const CHANNEL_NAME: Record<Channel, string> = { cli: 'CLI Adapter（本機指令）', webhook: '本機 webhook' };
 
-/** 把到期事件交給 hook／webhook；失敗只記錄，下一輪按 backoff 重試，outbox 不受影響。 */
+/** 把到期事件交給 CLI Adapter／webhook；失敗只記錄，下一輪按 backoff 重試，outbox 不受影響。 */
 export async function deliverCommand(
   ctx: CliContext,
   log: (s: string) => void = (s): void => void process.stderr.write(`${s}\n`),
 ): Promise<Record<Channel, DispatchResult>> {
   const r = await dispatchPending(ctx.outbox, ctx.config.delivery, ctx.now());
-  for (const ch of ['hook', 'webhook'] as const) {
+  for (const ch of ['cli', 'webhook'] as const) {
     if (r[ch].failed > 0) {
       const err = ctx.outbox.hookStats(ch, ctx.now()).last_error;
       log(`${CHANNEL_NAME[ch]}：${r[ch].failed} 則送出失敗，稍後重試${err ? `（${err}）` : ''}`);

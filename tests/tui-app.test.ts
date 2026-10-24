@@ -74,6 +74,7 @@ const noPrompts: PromptDeps = {
   checkbox: () => Promise.reject(new Error('unexpected checkbox')),
   select: () => Promise.reject(new Error('unexpected select')),
   confirm: () => Promise.resolve(false),
+  password: () => Promise.reject(new Error('unexpected password')),
 };
 
 const fakeService = () => {
@@ -335,14 +336,14 @@ describe('settings prompts', () => {
     const t = fakeTerm();
     const prompts: PromptDeps = {
       ...noPrompts,
-      checkbox: (() => Promise.resolve(['hook'])) as PromptDeps['checkbox'],
+      checkbox: (() => Promise.resolve(['cli'])) as PromptDeps['checkbox'],
       input: () => Promise.resolve('my-agent notify'),
     };
     const done = runUi(ctx, t, deps({ prompts }));
     await tick();
     for (const k of ['5', 'down', 'down', 'down', 'enter', 'down', 'down', 'down', 'down', 'enter'] as const) t.press(k); // 推送方式 > 修改推送方式
     await settle();
-    expect(ctx.config.delivery.hook).toEqual({ enabled: true, command: 'my-agent notify' });
+    expect(ctx.config.delivery.cli).toEqual({ enabled: true, command: 'my-agent notify' });
     expect(last(t)).toContain('已儲存推送方式');
     t.press('q');
     await done;

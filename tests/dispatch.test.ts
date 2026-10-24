@@ -28,10 +28,10 @@ function ev(over: Partial<Parameters<typeof makeEvent>[0]> = {}): IlearnEvent {
   });
 }
 
-function delivery(over: Partial<{ hook: string; webhook: string }>): Config['delivery'] {
+function delivery(over: Partial<{ cli: string; webhook: string; secret: string }>): Config['delivery'] {
   const d = structuredClone(DEFAULT_CONFIG.delivery);
-  if (over.hook !== undefined) d.hook = { enabled: true, command: over.hook };
-  if (over.webhook !== undefined) d.webhook = { enabled: true, url: over.webhook };
+  if (over.cli !== undefined) d.cli = { enabled: true, command: over.cli };
+  if (over.webhook !== undefined) d.webhook = { enabled: true, url: over.webhook, secret: over.secret ?? '' };
   return d;
 }
 
@@ -151,12 +151,12 @@ describe('dispatchPending', () => {
     [push, rec].forEach((e) => box.append(e));
     const sent: string[] = [];
     const deps = { runHook: (_c: string, e: IlearnEvent) => (sent.push(e.dedupe_key), Promise.resolve()) };
-    const r1 = await dispatchPending(box, delivery({ hook: 'agent-cli' }), NOON, deps);
-    expect(r1).toEqual({ hook: { sent: 1, failed: 0 }, webhook: { sent: 0, failed: 0 } });
-    const r2 = await dispatchPending(box, delivery({ hook: 'agent-cli' }), new Date(NOON.getTime() + 60_000), deps);
-    expect(r2.hook.sent).toBe(0);
+    const r1 = await dispatchPending(box, delivery({ cli: 'agent-cli' }), NOON, deps);
+    expect(r1).toEqual({ cli: { sent: 1, failed: 0 }, webhook: { sent: 0, failed: 0 } });
+    const r2 = await dispatchPending(box, delivery({ cli: 'agent-cli' }), new Date(NOON.getTime() + 60_000), deps);
+    expect(r2.cli.sent).toBe(0);
     expect(sent).toEqual(['announcement.new:88001']);
-    expect((await dispatchPending(box, delivery({}), NOON, deps)).hook.sent).toBe(0);
+    expect((await dispatchPending(box, delivery({}), NOON, deps)).cli.sent).toBe(0);
   });
 
   it('does not send night push events before deliver_after', async () => {
@@ -181,13 +181,13 @@ describe('dispatchPending', () => {
         return fail ? Promise.reject(new Error('exit code 1')) : Promise.resolve();
       },
     };
-    const d = delivery({ hook: 'agent-cli' });
+    const d = delivery({ cli: 'agent-cli' });
     const at = (min: number): Date => new Date(NOON.getTime() + min * 60_000);
-    expect((await dispatchPending(box, d, at(0), deps)).hook).toEqual({ sent: 0, failed: 1 });
+    expect((await dispatchPending(box, d, at(0), deps)).cli).toEqual({ sent: 0, failed: 1 });
     await dispatchPending(box, d, at(2), deps); // backoff 未到
     expect(calls).toHaveLength(1);
     fail = false;
-    expect((await dispatchPending(box, d, at(5), deps)).hook).toEqual({ sent: 1, failed: 0 });
+    expect((await dispatchPending(box, d, at(5), deps)).cli).toEqual({ sent: 1, failed: 0 });
     await dispatchPending(box, d, at(60), deps);
     expect(calls).toHaveLength(2);
     expect(box.read()).toHaveLength(1);
@@ -195,14 +195,14 @@ describe('dispatchPending', () => {
 
   it('hook and webhook track delivery separately', async () => {
     box.append(ev());
-    const d = delivery({ hook: 'agent-cli', webhook: 'http://localhost:9/x' });
+    const d = delivery({ cli: 'agent-cli', webhook: 'http://localhost:9/x' });
     const r = await dispatchPending(box, d, NOON, {
       runHook: () => Promise.resolve(),
       postWebhook: () => Promise.reject(new Error('ECONNREFUSED')),
     });
-    expect(r).toEqual({ hook: { sent: 1, failed: 0 }, webhook: { sent: 0, failed: 1 } });
+    expect(r).toEqual({ cli: { sent: 1, failed: 0 }, webhook: { sent: 0, failed: 1 } });
     expect(box.hookStats('webhook', NOON).retrying).toBe(1);
-    expect(box.hookStats('hook', NOON).retrying).toBe(0);
+    expect(box.hookStats('cli', NOON).retrying).toBe(0);
   });
 
   it('a non-localhost webhook in config.yaml fails instead of sending', async () => {

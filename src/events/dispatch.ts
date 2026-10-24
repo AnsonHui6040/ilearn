@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
+import { createHmac } from 'node:crypto';
 import type { Config } from '../config/config.js';
-import type { IlearnEvent } from '../types.js';
+import type { IlearnEvent, WireEvent } from '../types.js';
 import type { Channel, Outbox } from './outbox.js';
 
 const HOOK_TIMEOUT_MS = 30_000;
@@ -27,13 +28,20 @@ export function webhookUrlError(raw: string): string | null {
   return local ? null : '只接受本機位址（localhost、127.0.0.1 或 ::1）';
 }
 
-/** 執行使用者設定的指令，事件 JSON 經 stdin 傳入；exit code 0 才算成功。 */
-export function runHook(command: string, e: IlearnEvent, timeoutMs = HOOK_TIMEOUT_MS): Promise<void> {
+export type DeliveryKind = 'event' | 'test';
+
+/** 執行使用者設定的 CLI Adapter 指令，事件 JSON 經 stdin 傳入；exit code 0 才算成功。 */
+export function runHook(
+  command: string,
+  e: WireEvent,
+  timeoutMs = HOOK_TIMEOUT_MS,
+  kind: DeliveryKind = 'event',
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, {
       shell: true,
       stdio: ['pipe', 'ignore', 'pipe'],
-      env: { ...process.env, ILEARN_EVENT_ID: e.event_id, ILEARN_EVENT_TYPE: e.type },
+      env: { ...process.env, ILEARN_EVENT_ID: e.event_id, ILEARN_EVENT_TYPE: e.type, ILEARN_DELIVERY: kind },
     });
     let stderr = '';
     let settled = false;
@@ -62,21 +70,45 @@ export function runHook(command: string, e: IlearnEvent, timeoutMs = HOOK_TIMEOU
   });
 }
 
-/** POST 事件 JSON 到本機 webhook；不跟隨轉址，2xx 才算成功。 */
+export interface WebhookOptions {
+  /** 非空時加上 X-Webhook-Timestamp 與 X-Webhook-Signature-V2 */
+  secret?: string;
+  kind?: DeliveryKind;
+  /** 測試用：固定簽名時間（Unix 秒） */
+  timestamp?: number;
+}
+
+/** 簽名標頭：HMAC-SHA256(secret, `${timestamp}.${body}`)，小寫 hex；與 Hermes 的 X-Webhook-Signature-V2 相同。 */
+export function signatureHeaders(secret: string, body: string, timestamp: number): Record<string, string> {
+  const sig = createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
+  return { 'x-webhook-timestamp': String(timestamp), 'x-webhook-signature-v2': sig };
+}
+
+/** POST 事件 JSON 到本機 webhook；不跟隨轉址，2xx 才算成功，回傳 HTTP 狀態碼。 */
 export async function postWebhook(
   url: string,
-  e: IlearnEvent,
+  e: WireEvent,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = WEBHOOK_TIMEOUT_MS,
-): Promise<void> {
+  opts: WebhookOptions = {},
+): Promise<number> {
   const bad = webhookUrlError(url);
   if (bad !== null) throw new Error(`webhook 網址被拒絕：${bad}`);
+  const body = JSON.stringify(e);
+  const secret = opts.secret ?? '';
   let res: Response;
   try {
     res = await fetchImpl(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'user-agent': 'thu-ilearn' },
-      body: JSON.stringify(e),
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'thu-ilearn',
+        'x-request-id': e.event_id,
+        'x-thu-ilearn-event-id': e.event_id,
+        'x-thu-ilearn-delivery': opts.kind ?? 'event',
+        ...(secret !== '' ? signatureHeaders(secret, body, opts.timestamp ?? Math.floor(Date.now() / 1000)) : {}),
+      },
+      body,
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -85,6 +117,7 @@ export async function postWebhook(
   }
   if (res.status >= 300 && res.status < 400) throw new Error(`HTTP ${res.status}（不跟隨轉址）`);
   if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+  return res.status;
 }
 
 /** fetch 只會回報「fetch failed」，改用底層原因說明連線為何失敗。 */
@@ -107,8 +140,8 @@ function connectionError(err: unknown, host: string, timeoutMs: number): string 
 }
 
 export interface DispatchDeps {
-  runHook?: (command: string, e: IlearnEvent) => Promise<void>;
-  postWebhook?: (url: string, e: IlearnEvent) => Promise<void>;
+  runHook?: (command: string, e: IlearnEvent) => Promise<unknown>;
+  postWebhook?: (url: string, e: IlearnEvent, secret: string) => Promise<unknown>;
 }
 
 export interface DispatchResult {
@@ -118,25 +151,28 @@ export interface DispatchResult {
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-/** 把到期的推送事件交給已啟用的 hook／webhook；失敗只記錄，下一輪按 backoff 重試。 */
+/** 把到期的推送事件交給已啟用的 CLI Adapter／webhook；失敗只記錄，下一輪按 backoff 重試。 */
 export async function dispatchPending(
   outbox: Outbox,
   delivery: Config['delivery'],
   now: Date,
   deps: DispatchDeps = {},
 ): Promise<Record<Channel, DispatchResult>> {
-  const result: Record<Channel, DispatchResult> = { hook: { sent: 0, failed: 0 }, webhook: { sent: 0, failed: 0 } };
-  const senders: [Channel, ((e: IlearnEvent) => Promise<void>) | null][] = [
+  const result: Record<Channel, DispatchResult> = { cli: { sent: 0, failed: 0 }, webhook: { sent: 0, failed: 0 } };
+  const senders: [Channel, ((e: IlearnEvent) => Promise<unknown>) | null][] = [
     [
-      'hook',
-      delivery.hook.enabled && delivery.hook.command.trim() !== ''
-        ? (e) => (deps.runHook ?? runHook)(delivery.hook.command, e)
+      'cli',
+      delivery.cli.enabled && delivery.cli.command.trim() !== ''
+        ? (e) => (deps.runHook ?? runHook)(delivery.cli.command, e)
         : null,
     ],
     [
       'webhook',
       delivery.webhook.enabled && delivery.webhook.url.trim() !== ''
-        ? (e) => (deps.postWebhook ?? postWebhook)(delivery.webhook.url, e)
+        ? (e) =>
+            deps.postWebhook
+              ? deps.postWebhook(delivery.webhook.url, e, delivery.webhook.secret)
+              : postWebhook(delivery.webhook.url, e, fetch, WEBHOOK_TIMEOUT_MS, { secret: delivery.webhook.secret })
         : null,
     ],
   ];

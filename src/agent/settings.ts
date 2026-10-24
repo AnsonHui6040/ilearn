@@ -48,7 +48,7 @@ const REFUSALS: [RegExp, string][] = [
   ],
   [/^(account|username|password|password_saved|login|logout|credentials?|session|cookies?)(\.|$)/, '帳號、密碼與登入只能由使用者本人操作（ilearn login）'],
   [/^environment(\.|$)/, '執行環境只能由使用者本人在 ilearn setup 修改'],
-  [/^delivery(\.|$)/, '推送方式（hook 指令、webhook 網址）會讓程式執行指令或送出資料，只能由使用者本人修改'],
+  [/^delivery(\.|$)/, '推送方式（CLI Adapter 指令、webhook 網址與 secret）會讓程式執行指令或送出資料，只能由使用者本人修改'],
   [/^period_times(\.|$)/, '節次時間不開放 agent 修改'],
   [/^(service|setup|sync|reload|uninstall|reset|update)(\.|$)/, '背景服務、同步、更新、解除安裝與重設只能由使用者本人在終端機操作'],
   [/^updates\.(?!check$)/, '更新程式只能由使用者本人執行 ilearn update；agent 只能修改 updates.check（檢查頻率）'],
