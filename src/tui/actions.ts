@@ -294,15 +294,15 @@ export function saveRule(ctx: CliContext, rule: Rule): void {
 /* ---------- 推送方式、介面 ---------- */
 
 export function applyDelivery(ctx: CliContext, d: Config['delivery']): void {
-  const command = d.hook.command.trim();
+  const command = d.cli.command.trim();
   const url = d.webhook.url.trim();
-  if (d.hook.enabled && command === '') throw new CliExit(1, '請輸入指令');
+  if (d.cli.enabled && command === '') throw new CliExit(1, '請輸入指令');
   if (d.webhook.enabled) {
     const err = webhookUrlError(url);
     if (err !== null) throw new CliExit(1, err);
   }
   updateConfig(ctx, (cfg) => {
-    cfg.delivery = { hook: { enabled: d.hook.enabled, command }, webhook: { enabled: d.webhook.enabled, url } };
+    cfg.delivery = { cli: { enabled: d.cli.enabled, command }, webhook: { enabled: d.webhook.enabled, url, secret: d.webhook.secret } };
   });
 }
 

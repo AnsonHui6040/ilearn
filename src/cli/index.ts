@@ -13,6 +13,7 @@ import {
   filesSearchCommand,
   gradesCommand,
   markTeammateCommand,
+  reportCommand,
   statusCommand,
   tasksCommand,
 } from './commands/query.js';
@@ -22,6 +23,7 @@ import {
   rulesListCommand,
   rulesTestCommand,
 } from './commands/rules.js';
+import { deliveryTestCommand, deliveryTestStatusCommand } from './commands/delivery.js';
 import { daemonLoop, reloadCommand, runHandler, syncHandler } from './commands/sync.js';
 import { CliExit, createContext, createReadContext, createSetUpContext, isSetUp } from './context.js';
 import {
@@ -34,6 +36,7 @@ import {
   pendingSummariesText,
   statusText,
   tasksText,
+  testStatusText,
 } from './format.js';
 import { formatProgress, formatSummary, runLogin, runSetup, summaryExtras } from './setup.js';
 import { pendingSummaries, writeSummary } from '../summaries/summaries.js';
@@ -198,18 +201,67 @@ const events = program
   .option('--agent <名稱>', '排除該 agent 已 ack 的事件')
   .option('--type <類型>', '只列出指定類型')
   .option('--since <時間>', '只列出此時間之後偵測到的事件（ISO 格式）')
+  .option('--test', '只列出該 agent 尚未 ACK 的 delivery test 測試事件（需要 --agent）')
   .option('--json', '以 JSON 輸出')
-  .action((o: { deliverable?: boolean; agent?: string; type?: string; since?: string; json?: boolean }) => {
-    const r = eventsCommand(createReadContext(), o);
+  .action((o: { deliverable?: boolean; agent?: string; type?: string; since?: string; test?: boolean; json?: boolean }) => {
+    // agent 讀取時資料夾必須已設定：避免把「讀錯資料夾」誤當成「沒有新事件」
+    const r = eventsCommand(o.agent !== undefined ? createSetUpContext() : createReadContext(), o);
     out(o.json, r, () => eventsText(r));
   });
 events
   .command('ack <agent> <event_id>')
   .description('標記該 agent 已處理到此事件')
+  .option('--test', '這是 delivery test 的測試事件')
   .option('--json', '以 JSON 輸出')
-  .action((agent: string, eventId: string, o: { json?: boolean }) => {
-    const r = ackCommand(createSetUpContext(), agent, eventId);
+  .action((agent: string, eventId: string, _o: unknown, cmd: Command) => {
+    // 上層 events 也有 --test、--json，commander 會把它們算給上層，所以合併上層的選項
+    const o = cmd.optsWithGlobals<{ test?: boolean; json?: boolean }>();
+    const r = ackCommand(createSetUpContext(), agent, eventId, o.test ? { test: true } : {});
     out(o.json, r, () => `${agent} 已處理到 ${eventId}`);
+  });
+events
+  .command('report <agent> <event_id>')
+  .description('回報事件處理結果；failed 會顯示在 ilearn status 與 ilearn ui，不會移動 ACK 進度')
+  .requiredOption('--status <狀態>', 'processed 或 failed')
+  .option('--note <說明>', '失敗原因等說明（最多 300 字）')
+  .option('--test', '這是 delivery test 的測試事件')
+  .option('--json', '以 JSON 輸出')
+  .action((agent: string, eventId: string, _o: unknown, cmd: Command) => {
+    const o = cmd.optsWithGlobals<{ status: string; note?: string; test?: boolean; json?: boolean }>();
+    const r = reportCommand(createSetUpContext(), {
+      agent,
+      eventId,
+      status: o.status,
+      ...(o.note !== undefined ? { note: o.note } : {}),
+      ...(o.test ? { test: true } : {}),
+    });
+    out(o.json, r, () => `已記錄 ${agent} 對 ${eventId} 的處理結果：${r.status}`);
+  });
+
+const delivery = program.command('delivery').description('推送測試');
+delivery
+  .command('test')
+  .description('送出測試事件並檢查四級結果（Transport、Agent、處理、ACK）；測試事件不會進入正式事件')
+  .option('--agent <名稱>', '要測試的 agent 名稱（英數、. _ -，最長 64 字元）')
+  .option('--status <test_id>', '查詢某次測試的四級結果')
+  .option('--json', '以 JSON 輸出')
+  .action(async (o: { agent?: string; status?: string; json?: boolean }) => {
+    const ctx = createSetUpContext();
+    if (o.status !== undefined) {
+      const s = deliveryTestStatusCommand(ctx, o.status);
+      out(o.json, s, () => testStatusText(s));
+      return;
+    }
+    if (o.agent === undefined) throw new CliExit(1, '請用 --agent 帶入 agent 名稱，或用 --status <test_id> 查詢結果');
+    const r = await deliveryTestCommand(ctx, { agent: o.agent });
+    out(o.json, r, () =>
+      [
+        `測試 ${r.test_id}`,
+        `Transport：${r.transport.status}（CLI Adapter ${r.transport.cli.status}${r.transport.cli.error ? `：${r.transport.cli.error}` : ''}；webhook ${r.transport.webhook.status}${r.transport.webhook.error ? `：${r.transport.webhook.error}` : ''}${r.signed === null ? '' : r.signed ? '，已簽名' : '，未簽名'}）`,
+        'Transport PASS 只代表通知送達。agent 接下來依序執行：',
+        ...r.next_steps.map((s, i) => `${i + 1}. ${s}`),
+      ].join('\n'),
+    );
   });
 
 program

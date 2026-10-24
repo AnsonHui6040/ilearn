@@ -1,5 +1,6 @@
 import type { PendingSummaries } from '../summaries/summaries.js';
-import type { IlearnEvent } from '../types.js';
+import type { TestStatus } from '../events/delivery-test.js';
+import type { WireEvent } from '../types.js';
 import type { announcementsCommand, coursesCommand, courseCommand, filesSearchCommand, gradesCommand, statusCommand, tasksCommand } from './commands/query.js';
 
 type Ret<T extends (...a: never[]) => unknown> = ReturnType<T>;
@@ -19,7 +20,7 @@ export function tasksText(r: Ret<typeof tasksCommand>): string {
   return lines.join('\n');
 }
 
-export function eventsText(events: IlearnEvent[]): string {
+export function eventsText(events: WireEvent[]): string {
   if (events.length === 0) return '沒有事件';
   return events
     .map((e) => `${e.event_id}  ${e.detected_at.slice(5, 16).replace('T', ' ')}  ${e.type}  ${e.course?.name ?? '系統'}  ${e.item?.title ?? ''}`.trimEnd())
@@ -68,13 +69,16 @@ export function statusText(s: Ret<typeof statusCommand>): string {
   if (s.incomplete_courses.length > 0) lines.push(`資料可能不完整的課程：${s.incomplete_courses.join('、')}`);
   lines.push(`檔案：已下載 ${s.files.done}，待下載 ${s.files.pending}，失敗 ${s.files.failed}，略過 ${s.files.skipped}`);
   if (s.last_error) lines.push(`最近錯誤（${s.last_error.at}）：${s.last_error.message}`);
-  for (const [name, d] of [['本機指令 hook', s.delivery.hook], ['本機 webhook', s.delivery.webhook]] as const) {
+  for (const [name, d] of [['CLI Adapter（本機指令）', s.delivery.cli], ['本機 webhook', s.delivery.webhook]] as const) {
     if (!d.enabled && d.retrying === 0 && d.gave_up === 0) continue;
     const parts = [d.enabled ? '已啟用' : '已停用'];
     if (d.retrying > 0) parts.push(`重試中 ${d.retrying} 則`);
     if (d.gave_up > 0) parts.push(`超過 24 小時放棄 ${d.gave_up} 則（outbox 仍保留）`);
     if (d.last_error && (d.retrying > 0 || d.gave_up > 0)) parts.push(`最近錯誤：${d.last_error}`);
     lines.push(`${name}：${parts.join('，')}`);
+  }
+  for (const f of s.processing_failures) {
+    lines.push(`處理失敗（${f.at.slice(5, 16).replace('T', ' ')}）：${f.agent} 處理 ${f.type} ${f.event_id}${f.note ? `：${f.note}` : ''}`);
   }
   if (s.rules_warning) lines.push(`注意：${s.rules_warning}`);
   return lines.join('\n');
@@ -84,5 +88,19 @@ export function pendingSummariesText(r: PendingSummaries): string {
   const lines = [r.agent_write ? 'agent 可寫入摘要' : 'agent 目前不可寫入摘要（使用者可在 ilearn setup 第 8 步或 ilearn ui 的「系統設定 > agent 權限」開啟）'];
   lines.push(`今天還可以寫 ${r.remaining_today} 則，待摘要 ${r.pending.length} 則`);
   for (const t of r.pending) lines.push(`${t.target_id}  ${t.kind === 'material' ? '教材' : '公告'}  ${t.course.name}  ${t.title}`);
+  return lines.join('\n');
+}
+
+export function testStatusText(s: TestStatus): string {
+  const t = s.transport;
+  const ch = (name: string, x: { status: string; error?: string }): string =>
+    `${name} ${x.status}${x.error ? `（${x.error}）` : ''}`;
+  const lines = [
+    `測試 ${s.test_id}（agent：${s.agent}）${s.timed_out ? '，已逾時' : ''}`,
+    `1 Transport：${t.status}（${ch('CLI Adapter', t.cli)}；${ch('webhook', t.webhook)}${t.webhook.status === 'PASS' || t.webhook.status === 'FAIL' ? (s.signed ? '，已簽名' : '，未簽名') : ''}）`,
+    `2 Agent 讀取：${s.agent_read.status}`,
+    `3 處理：${s.processing.status}${s.processing.note ? `（${s.processing.note}）` : ''}`,
+    `4 ACK：${s.ack.status}`,
+  ];
   return lines.join('\n');
 }

@@ -387,10 +387,10 @@ function systemRight(s: TuiState, d: TuiData, item: number): Row[] {
         { text: '  修改', key: 'interfaces', activate: { prompt: { kind: 'interfaces' } } },
       ];
     case '推送方式': {
-      const ch = (name: string, x: typeof st.delivery.hook): Row => ({
+      const ch = (name: string, x: typeof st.delivery.cli): Row => ({
         text: `  ${name}：${x.enabled ? '啟用' : '停用'}${x.retrying ? `，重試中 ${x.retrying} 則` : ''}${x.gave_up ? `，放棄 ${x.gave_up} 則` : ''}`,
       });
-      return [head('推送方式'), { text: '  outbox 檔案：啟用（必備）' }, ch('本機指令 hook', st.delivery.hook), ch('本機 webhook', st.delivery.webhook), { text: '' }, { text: '  修改推送方式', key: 'delivery', activate: { prompt: { kind: 'delivery' } } }];
+      return [head('推送方式'), { text: '  outbox 檔案：啟用（必備）' }, ch('CLI Adapter（本機指令）', st.delivery.cli), ch('本機 webhook', st.delivery.webhook), { text: `  webhook secret：${d.config.delivery.webhook.secret !== '' ? '已設定' : '未設定'}` }, { text: '' }, { text: '  修改推送方式', key: 'delivery', activate: { prompt: { kind: 'delivery' } } }];
     }
     case '夜間時段':
       return [head('夜間時段'), dim('  這段時間的推送保存到結束時才送出；截止前 3 小時提醒照常即時推送'), { text: `  ${d.config.quiet_hours.start}–${d.config.quiet_hours.end}`, key: 'quiet', activate: { prompt: { kind: 'quietHours' } } }];

@@ -30,7 +30,7 @@ export function makeEvent(p: MakeEventInput): IlearnEvent {
   };
 }
 
-export type Channel = 'hook' | 'webhook';
+export type Channel = 'cli' | 'webhook';
 
 interface HookStatus {
   ok: boolean;
@@ -107,7 +107,10 @@ export class Outbox {
   private loadState(): State {
     if (!existsSync(this.statePath)) return { dedupe: [], hooks: {} };
     const raw = JSON.parse(readFileSync(this.statePath, 'utf8')) as Partial<State>;
-    return { dedupe: raw.dedupe ?? [], hooks: raw.hooks ?? {} };
+    // 舊版通道名稱 hook 改為 cli
+    const hooks: Record<string, HookStatus> = {};
+    for (const [k, v] of Object.entries(raw.hooks ?? {})) hooks[k.startsWith('hook:') ? `cli:${k.slice(5)}` : k] = v;
+    return { dedupe: raw.dedupe ?? [], hooks };
   }
 
   private saveState(): void {
@@ -124,6 +127,11 @@ export class Outbox {
     this.dedupe.add(token);
     this.saveState();
     return true;
+  }
+
+  /** outbox 資料夾（delivery test 與處理回報的檔案放在這裡面）。 */
+  get outboxDir(): string {
+    return this.dir;
   }
 
   private readAll(): IlearnEvent[] {

@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { getSyncState, listFiles, listItems, setCompletion, type StoredCourse, type StoredFile, type StoredItem } from '../../db/repo.js';
-import type { EventType, IlearnEvent } from '../../types.js';
+import type { EventType, WireEvent } from '../../types.js';
+import { ackTest, readTestEvents, reportTest } from '../../events/delivery-test.js';
+import { checkAgent } from '../../events/outbox.js';
+import { cleanNote, recentFailures, recordReport, type ReportStatus } from '../../events/reports.js';
 import { summaryTexts } from '../../summaries/summaries.js';
 import { toTaipeiIso } from '../../time.js';
 import { absPath, CliExit, readAccount, type CliContext } from '../context.js';
@@ -255,8 +258,13 @@ export function fileTextCommand(ctx: CliContext, id: string): { supported: boole
 
 export function eventsCommand(
   ctx: CliContext,
-  o: { deliverable?: boolean; agent?: string; type?: string; since?: string },
-): IlearnEvent[] {
+  o: { deliverable?: boolean; agent?: string; type?: string; since?: string; test?: boolean },
+): WireEvent[] {
+  if (o.test) {
+    if (o.agent === undefined) throw new CliExit(1, '--test 需要帶 --agent <名稱>');
+    if (o.type !== undefined || o.since !== undefined) throw new CliExit(1, '--test 不能與 --type、--since 一起使用');
+    return readTestEvents(ctx.outbox.outboxDir, o.agent, ctx.now());
+  }
   if (o.type !== undefined && !EVENT_TYPES.includes(o.type as EventType)) {
     throw new CliExit(1, `未知的事件類型：${o.type}`);
   }
@@ -268,10 +276,48 @@ export function eventsCommand(
   });
 }
 
-export function ackCommand(ctx: CliContext, agent: string, eventId: string): { agent: string; last_event_id: string } {
+export function ackCommand(
+  ctx: CliContext,
+  agent: string,
+  eventId: string,
+  o: { test?: boolean } = {},
+): { agent: string; last_event_id: string; test?: true } {
+  if (o.test) {
+    try {
+      ackTest(ctx.outbox.outboxDir, agent, eventId, ctx.now());
+    } catch (e) {
+      throw new CliExit(1, e instanceof Error ? e.message : String(e));
+    }
+    return { agent, last_event_id: eventId, test: true };
+  }
   if (!ctx.outbox.read().some((e) => e.event_id === eventId)) throw new CliExit(1, `找不到事件 ${eventId}`);
   ctx.outbox.ack(agent, eventId);
   return { agent, last_event_id: eventId };
+}
+
+export const REPORT_STATUSES = ['processed', 'failed'] as const satisfies readonly ReportStatus[];
+
+/** agent 回報處理結果。失敗會顯示在 status 與 ilearn ui 提醒頁；兩種結果都不會移動 cursor。 */
+export function reportCommand(
+  ctx: CliContext,
+  o: { agent: string; eventId: string; status: string; note?: string; test?: boolean },
+): { agent: string; event_id: string; status: ReportStatus; note: string | null; test?: true } {
+  checkAgent(o.agent);
+  if (!REPORT_STATUSES.includes(o.status as ReportStatus)) throw new CliExit(1, '--status 只能是 processed 或 failed');
+  const status = o.status as ReportStatus;
+  if (o.test) {
+    try {
+      const r = reportTest(ctx.outbox.outboxDir, o.agent, o.eventId, status, o.note, ctx.now());
+      return { agent: o.agent, event_id: o.eventId, status, note: r.processed?.note ?? null, test: true };
+    } catch (e) {
+      throw new CliExit(1, e instanceof Error ? e.message : String(e));
+    }
+  }
+  const ev = ctx.outbox.read().find((e) => e.event_id === o.eventId);
+  if (!ev) throw new CliExit(1, `找不到事件 ${o.eventId}`);
+  const note = cleanNote(o.note);
+  recordReport(ctx.outbox.outboxDir, { agent: o.agent, event_id: o.eventId, type: ev.type, status, note }, ctx.now());
+  return { agent: o.agent, event_id: o.eventId, status, note };
 }
 
 /* ---------- mark-teammate ---------- */
@@ -295,6 +341,23 @@ export function markTeammateCommand(
 }
 
 /* ---------- status ---------- */
+
+export interface ChannelStatus {
+  enabled: boolean;
+  retrying: number;
+  gave_up: number;
+  last_error: string | null;
+}
+
+function deliveryStatus(ctx: CliContext): { cli: ChannelStatus; webhook: ChannelStatus; hook: ChannelStatus } {
+  const ch = (c: 'cli' | 'webhook'): ChannelStatus => ({
+    enabled: ctx.config.delivery[c].enabled,
+    ...ctx.outbox.hookStats(c, ctx.now()),
+  });
+  const cli = ch('cli');
+  // hook 是 cli 的舊名稱，之後的版本會移除
+  return { cli, webhook: ch('webhook'), hook: { ...cli } };
+}
 
 export function statusCommand(ctx: CliContext) {
   const st = getSyncState(ctx.db);
@@ -320,12 +383,8 @@ export function statusCommand(ctx: CliContext) {
     files: { pending: count('pending'), done: count('done'), skipped: count('skipped'), failed: count('failed'), link: count('link') },
     last_error: readLastError(ctx.root),
     rules_warning: ctx.rulesWarning ?? null,
-    // 只回報是否啟用與失敗數，不輸出指令或網址本身
-    delivery: Object.fromEntries(
-      (['hook', 'webhook'] as const).map((ch) => [
-        ch,
-        { enabled: ctx.config.delivery[ch].enabled, ...ctx.outbox.hookStats(ch, ctx.now()) },
-      ]),
-    ) as Record<'hook' | 'webhook', { enabled: boolean; retrying: number; gave_up: number; last_error: string | null }>,
+    // 只回報是否啟用與失敗數，不輸出指令、網址或 secret 本身
+    delivery: deliveryStatus(ctx),
+    processing_failures: recentFailures(ctx.outbox.outboxDir, ctx.now()),
   };
 }
