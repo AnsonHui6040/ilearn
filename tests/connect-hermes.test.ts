@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -12,9 +12,14 @@ import {
   reportTest,
 } from '../src/events/delivery-test.js';
 import {
-  appendMissingEnv,
   buildCronPrompt,
+  connectPromptCommand,
+  connectPromptText,
+  connectRequestCommand,
+  detectActiveProfile,
   displayArgs,
+  requestFile,
+  runConnectApprove,
   runConnectHermes,
   type HermesDeps,
   type RunResult,
@@ -32,7 +37,6 @@ interface Setup {
   calls: string[][];
   said: string[];
   asked: string[];
-  home: string;
   /** 每次 sleep 時執行的動作（模擬 agent 逐步完成測試） */
   onSleep: Array<(ctx: CliContext, testId: string) => void>;
   sleeps: number[];
@@ -46,11 +50,12 @@ interface Opts {
   cronJobFlag?: boolean;
   cronRunning?: boolean;
   timeoutMs?: number;
+  /** cron list 是否列出 thu-ilearn-inbox */
+  cronListed?: boolean;
 }
 
 function setup(o: Opts = {}): Setup {
   const root = mkdtempSync(join(tmpdir(), 'ilearn-connect-'));
-  const home = mkdtempSync(join(tmpdir(), 'ilearn-home-'));
   const ctx = createContext({
     root,
     api: createFakeApi().api,
@@ -78,7 +83,7 @@ function setup(o: Opts = {}): Setup {
       if (j === 'gateway status') return ok('gateway running');
       if (j === 'webhook --help') return ok('usage: hermes webhook');
       if (j === 'webhook subscribe --help') return ok(o.cronJobFlag === false ? '--prompt --secret' : '--prompt --secret --cron-job');
-      if (j === 'cron list' || j === 'webhook list') return ok('');
+      if (j === 'cron list' || j === 'webhook list') return ok(o.cronListed ? 'thu-ilearn-inbox  every 5m' : '');
       return ok('done');
     },
     health: () => Promise.resolve(healths ? (healths.shift() ?? true) : o.healthy === undefined ? true : (o.healthy as boolean)),
@@ -101,10 +106,10 @@ function setup(o: Opts = {}): Setup {
       return Promise.resolve();
     },
     say: (s = '') => void said.push(s),
-    home,
     node: '/opt/node/bin/node',
     script: '/opt/ilearn/dist/cli/index.js',
     randomSecret: () => SECRET,
+    randomCode: () => 'AB23CD',
     pollIntervalMs: 10_000,
     pollTimeoutMs: o.timeoutMs ?? 60_000,
     restartWaitMs: 1,
@@ -117,7 +122,7 @@ function setup(o: Opts = {}): Setup {
       return { test_id: r.test_id };
     },
   };
-  return { ctx, deps, calls, said, asked, home, onSleep, sleeps };
+  return { ctx, deps, calls, said, asked, onSleep, sleeps };
 }
 
 const text = (s: Setup): string => s.said.join('\n');
@@ -145,7 +150,7 @@ describe('connect hermes: 偵測', () => {
   it('missing hermes stops with a clear message', async () => {
     const s = setup({ replies: (a) => (a.includes('--version') ? fail('ENOENT', 127) : undefined) });
     await expect(runConnectHermes(s.ctx, {}, s.deps)).rejects.toThrow(/找不到 hermes/);
-    expect(s.calls).toHaveLength(1);
+    expect(s.calls).toHaveLength(2);
   });
 });
 
@@ -177,7 +182,9 @@ describe('connect hermes: 完整流程', () => {
     const r = await runConnectHermes(s.ctx, {}, s.deps);
     const prompt = buildCronPrompt({ node: s.deps.node, script: s.deps.script, root: s.ctx.root, agent: 'hermes' });
     expect(s.calls).toEqual([
+      ['profile', 'list'],
       ['-p', 'daily', '--version'],
+      ['-p', 'daily', 'config', 'get', 'WEBHOOK_PORT'],
       ['-p', 'daily', 'cron', 'status'],
       ['-p', 'daily', 'gateway', 'status'],
       ['-p', 'daily', 'webhook', '--help'],
@@ -210,7 +217,7 @@ describe('connect hermes: 完整流程', () => {
     const s = setup();
     await runConnectHermes(s.ctx, {}, s.deps);
     expect(s.calls.every((c) => c[0] !== '-p')).toBe(true);
-    expect(s.calls[0]).toEqual(['--version']);
+    expect(s.calls[1]).toEqual(['--version']);
   });
 
   it('replaces existing job and route after confirmation (remove before create)', async () => {
@@ -244,7 +251,7 @@ describe('connect hermes: 完整流程', () => {
   it('declining every change makes no mutating call and no config change', async () => {
     const s = setup({ confirms: { 建立: false } });
     await runConnectHermes(s.ctx, {}, s.deps);
-    const mutating = s.calls.filter((c) => ['create', 'remove', 'subscribe', 'run', 'start', 'restart'].some((m) => c.includes(m) && !c.includes('--help')));
+    const mutating = s.calls.filter((c) => ['create', 'remove', 'subscribe', 'run', 'start', 'restart', 'set'].some((m) => c.includes(m) && !c.includes('--help')));
     expect(mutating).toEqual([]);
     expect(loadConfig(s.ctx.root).delivery.webhook.enabled).toBe(false);
     expect(text(s)).toContain('沒有更改任何設定');
@@ -271,31 +278,23 @@ describe('connect hermes: 降級', () => {
     expect(s.calls.some((c) => c.join(' ').endsWith('cron run thu-ilearn-inbox'))).toBe(true);
   });
 
-  it('health fails: appends only missing env keys, restarts, then continues', async () => {
-    const s = setup({ healthy: [false, true], answers: { profile: 'daily' } });
-    const dir = join(s.home, '.hermes', 'profiles', 'daily');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, '.env'), 'FOO=bar\nWEBHOOK_PORT=8644');
+  it('health fails: enables the webhook with hermes config set, restarts with -y, then continues', async () => {
+    const s = setup({ healthy: [false, true], answers: { profile: 'daily', 埠: '9000' } });
     await runConnectHermes(s.ctx, {}, s.deps);
-    const env = readFileSync(join(dir, '.env'), 'utf8');
-    expect(env).toBe('FOO=bar\nWEBHOOK_PORT=8644\nWEBHOOK_ENABLED=true\n');
-    expect(existsSync(join(s.home, '.hermes', '.env'))).toBe(false);
-    expect(sub(s.calls, 'gateway', 'restart')).toEqual([['-p', 'daily', 'gateway', 'restart']]);
+    const mut = s.calls.filter((c) => ['set', 'restart'].some((m) => c.includes(m)));
+    expect(mut).toEqual([
+      ['-p', 'daily', 'config', 'set', 'WEBHOOK_ENABLED', 'true'],
+      ['-p', 'daily', 'config', 'set', 'WEBHOOK_PORT', '9000'],
+      ['-p', 'daily', 'gateway', 'restart', '-y'],
+    ]);
     expect(sub(s.calls, 'webhook', 'subscribe').filter((c) => !c.includes('--help'))).toHaveLength(1);
     expect(s.ctx.config.delivery.webhook.enabled).toBe(true);
   });
 
-  it('health fails on the default profile writes ~/.hermes/.env', async () => {
-    const s = setup({ healthy: [false, true] });
-    mkdirSync(join(s.home, '.hermes'), { recursive: true });
-    await runConnectHermes(s.ctx, {}, s.deps);
-    expect(readFileSync(join(s.home, '.hermes', '.env'), 'utf8')).toBe('WEBHOOK_ENABLED=true\nWEBHOOK_PORT=8644\n');
-  });
-
   it('health fails and user declines: polling only, no env write, webhook untouched', async () => {
-    const s = setup({ healthy: false, confirms: { WEBHOOK_ENABLED: false, 重新啟動: false } });
+    const s = setup({ healthy: false, confirms: { WEBHOOK_ENABLED: false } });
     await runConnectHermes(s.ctx, {}, s.deps);
-    expect(existsSync(join(s.home, '.hermes', '.env'))).toBe(false);
+    expect(sub(s.calls, 'config', 'set')).toHaveLength(0);
     expect(sub(s.calls, 'gateway', 'restart')).toHaveLength(0);
     expect(s.calls.filter((c) => c.includes('subscribe') && !c.includes('--help'))).toHaveLength(0);
     expect(s.ctx.config.delivery.webhook.enabled).toBe(false);
@@ -304,18 +303,9 @@ describe('connect hermes: 降級', () => {
 
   it('health still failing after restart: polling only', async () => {
     const s = setup({ healthy: false });
-    mkdirSync(join(s.home, '.hermes'), { recursive: true });
     await runConnectHermes(s.ctx, {}, s.deps);
     expect(s.calls.filter((c) => c.includes('subscribe') && !c.includes('--help'))).toHaveLength(0);
     expect(s.ctx.config.delivery.webhook.enabled).toBe(false);
-  });
-
-  it('appendMissingEnv never rewrites other lines and reports differing values', () => {
-    const f = join(mkdtempSync(join(tmpdir(), 'env-')), '.env');
-    writeFileSync(f, '# note\nWEBHOOK_ENABLED=false\n');
-    const r = appendMissingEnv(f, { WEBHOOK_ENABLED: 'true', WEBHOOK_PORT: '8644' });
-    expect(r).toEqual({ added: ['WEBHOOK_PORT'], differing: ['WEBHOOK_ENABLED'] });
-    expect(readFileSync(f, 'utf8')).toBe('# note\nWEBHOOK_ENABLED=false\nWEBHOOK_PORT=8644\n');
   });
 });
 
@@ -417,5 +407,203 @@ describe('displayArgs', () => {
     expect(t).toContain('--secret ***');
     expect(t).not.toContain(SECRET);
     expect(t).toContain('固定提示詞');
+  });
+});
+
+describe('connect hermes --prompt', () => {
+  it('gives the fixed cron prompt and instructions for the agent', () => {
+    const s = setup();
+    const r = connectPromptCommand(s.ctx, { agent: 'hermes' }, s.deps);
+    expect(r).toEqual({
+      agent: 'hermes',
+      cron_job: 'thu-ilearn-inbox',
+      schedule: 'every 5m',
+      cron_expression: '*/5 * * * *',
+      deliver: 'origin',
+      prompt: buildCronPrompt({ node: s.deps.node, script: s.deps.script, root: s.ctx.root, agent: 'hermes' }),
+    });
+    const t = connectPromptText(r);
+    expect(t).toContain('thu-ilearn-inbox');
+    expect(t).toContain('每 5 分鐘');
+    expect(t).toContain('origin');
+    expect(t).toContain(r.prompt);
+    expect(t).toContain('不要改寫');
+    expect(r.prompt).toContain(`ILEARN_HOME="${s.ctx.root}" "/opt/node/bin/node" "/opt/ilearn/dist/cli/index.js"`);
+    expect(s.calls).toEqual([]);
+    expect(t).not.toMatch(/[嘅咗唔喺係冇佢嚟啲]/);
+  });
+
+  it('rejects an invalid agent name', () => {
+    const s = setup();
+    expect(() => connectPromptCommand(s.ctx, { agent: 'bad name!' }, s.deps)).toThrow(/無效的 agent/);
+  });
+});
+
+describe('connect hermes --request', () => {
+  it('runs only read-only hermes commands and writes a 0600 request file', async () => {
+    const s = setup({ cronListed: true });
+    const r = await connectRequestCommand(s.ctx, { profile: 'daily', agent: 'hermes' }, s.deps);
+    expect(s.calls).toEqual([
+      ['-p', 'daily', '--version'],
+      ['-p', 'daily', 'cron', 'list'],
+      ['-p', 'daily', 'webhook', 'subscribe', '--help'],
+      ['-p', 'daily', 'webhook', 'list'],
+      ['-p', 'daily', 'config', 'get', 'WEBHOOK_PORT'],
+    ]);
+    const file = requestFile(s.ctx.root);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    expect(saved).toMatchObject({
+      code: 'AB23CD',
+      profile: 'daily',
+      agent: 'hermes',
+      cron_job: 'thu-ilearn-inbox',
+      port: 8644,
+      root: s.ctx.root,
+      created_at: NOW.toISOString(),
+      expires_at: new Date(NOW.getTime() + 30 * 60_000).toISOString(),
+    });
+    expect(r.warnings).toEqual([]);
+    expect(r.next_step).toContain('ilearn connect approve');
+    expect(r.next_step).toContain('AB23CD');
+  });
+
+  it('warns but still writes the request when the cron job is missing', async () => {
+    const s = setup();
+    const r = await connectRequestCommand(s.ctx, { profile: '', agent: 'hermes', cronJob: 'my-job', port: 9001 }, s.deps);
+    expect(r.warnings[0]).toContain('my-job');
+    expect(existsSync(requestFile(s.ctx.root))).toBe(true);
+    expect(JSON.parse(readFileSync(requestFile(s.ctx.root), 'utf8'))).toMatchObject({ cron_job: 'my-job', port: 9001, profile: '' });
+    expect(s.calls.every((c) => c[0] !== '-p')).toBe(true);
+  });
+
+  it('rejects bad input and a missing hermes without writing', async () => {
+    const s = setup();
+    await expect(connectRequestCommand(s.ctx, { profile: 'a b', agent: 'hermes' }, s.deps)).rejects.toThrow(/profile/);
+    await expect(connectRequestCommand(s.ctx, { profile: '', agent: 'x y' }, s.deps)).rejects.toThrow(/agent/);
+    await expect(connectRequestCommand(s.ctx, { profile: '', agent: 'h', port: 70000 }, s.deps)).rejects.toThrow(/埠/);
+    const m = setup({ replies: (a) => (a.includes('--version') ? fail('ENOENT', 127) : undefined) });
+    await expect(connectRequestCommand(m.ctx, { profile: '', agent: 'h' }, m.deps)).rejects.toThrow(/找不到 hermes/);
+    expect(existsSync(requestFile(m.ctx.root))).toBe(false);
+  });
+});
+
+describe('connect approve', () => {
+  const patch = (s: Setup, f: (r: Record<string, unknown>) => void): void => {
+    const file = requestFile(s.ctx.root);
+    const r = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    f(r);
+    writeFileSync(file, JSON.stringify(r));
+  };
+  const hermesCalls = (s: Setup): number => s.calls.length;
+
+  it('refuses when there is no request', async () => {
+    const s = setup();
+    await expect(runConnectApprove(s.ctx, s.deps)).rejects.toThrow(/沒有待確認/);
+    expect(hermesCalls(s)).toBe(0);
+  });
+
+  it('refuses an expired request', async () => {
+    const s = setup({ cronListed: true });
+    await connectRequestCommand(s.ctx, { profile: '', agent: 'hermes' }, s.deps);
+    patch(s, (r) => (r.expires_at = new Date(NOW.getTime() - 1000).toISOString()));
+    const before = s.calls.length;
+    await expect(runConnectApprove(s.ctx, s.deps)).rejects.toThrow(/過期/);
+    expect(s.calls.length).toBe(before);
+  });
+
+  it('refuses when the request root differs from ILEARN_HOME', async () => {
+    const s = setup({ cronListed: true });
+    await connectRequestCommand(s.ctx, { profile: '', agent: 'hermes' }, s.deps);
+    patch(s, (r) => (r.root = '/somewhere/else'));
+    await expect(runConnectApprove(s.ctx, s.deps)).rejects.toThrow(/ILEARN_HOME/);
+  });
+
+  it('refuses when the cron job does not exist in Hermes', async () => {
+    const s = setup({ confirms: { 確認代碼: true } });
+    await connectRequestCommand(s.ctx, { profile: '', agent: 'hermes' }, s.deps);
+    await expect(runConnectApprove(s.ctx, s.deps)).rejects.toThrow(/還沒有排程工作 thu-ilearn-inbox/);
+    expect(s.calls.some((c) => c.includes('set') || c.includes('restart') || c.includes('subscribe') && !c.includes('--help'))).toBe(false);
+    expect(existsSync(requestFile(s.ctx.root))).toBe(true);
+  });
+
+  it('declining the code makes no hermes call and keeps the request', async () => {
+    const s = setup({ cronListed: true, confirms: { 確認代碼: false } });
+    await connectRequestCommand(s.ctx, { profile: 'daily', agent: 'hermes' }, s.deps);
+    const before = s.calls.length;
+    const r = await runConnectApprove(s.ctx, s.deps);
+    expect(r.changes).toEqual([]);
+    expect(s.calls.length).toBe(before);
+    expect(s.asked.join('\n')).toContain('AB23CD');
+    expect(existsSync(requestFile(s.ctx.root))).toBe(true);
+    expect(s.ctx.config.delivery.webhook.enabled).toBe(false);
+  });
+
+  it('happy path: config set, restart -y, subscribe with the request cron job, then deletes the request', async () => {
+    const s = setup({
+      confirms: { 確認代碼: true },
+      healthy: [false, false, true],
+      replies: (a) => (a.join(' ').endsWith('cron list') ? ok('my-inbox  every 5m') : undefined),
+    });
+    // --request 內部會檢查一次 health，approve 再檢查一次，重新啟動後第三次
+    await connectRequestCommand(s.ctx, { profile: 'daily', agent: 'hermes', cronJob: 'my-inbox' }, s.deps);
+    s.calls.length = 0;
+    s.onSleep.push(
+      (c) => void readTestEvents(c.outbox.outboxDir, 'hermes', NOW),
+      (c, id) => void reportTest(c.outbox.outboxDir, 'hermes', id, 'processed', undefined, NOW),
+      (c, id) => void ackTest(c.outbox.outboxDir, 'hermes', id, NOW),
+    );
+    const r = await runConnectApprove(s.ctx, s.deps);
+    expect(s.calls).toEqual([
+      ['-p', 'daily', '--version'],
+      ['-p', 'daily', 'cron', 'list'],
+      ['-p', 'daily', 'webhook', 'subscribe', '--help'],
+      ['-p', 'daily', 'webhook', 'list'],
+      ['-p', 'daily', 'config', 'set', 'WEBHOOK_ENABLED', 'true'],
+      ['-p', 'daily', 'config', 'set', 'WEBHOOK_PORT', '8644'],
+      ['-p', 'daily', 'gateway', 'restart', '-y'],
+      [
+        '-p', 'daily', 'webhook', 'subscribe', 'thu-ilearn',
+        '--cron-job', 'my-inbox',
+        '--secret', SECRET,
+        '--description', 'thu-ilearn 新事件通知',
+        '--prompt', 'thu-ilearn 有新事件，請依排程工作的步驟處理。',
+      ],
+    ]);
+    expect(r.testPassed).toBe(true);
+    expect(existsSync(requestFile(s.ctx.root))).toBe(false);
+    expect(loadConfig(s.ctx.root).delivery.webhook).toEqual({ enabled: true, url: 'http://127.0.0.1:8644/webhooks/thu-ilearn', secret: SECRET });
+    const out = text(s);
+    expect(out).not.toContain(SECRET);
+    expect(out).toContain('ilearn connect hermes --remove');
+    expect(out).toContain('cron remove my-inbox');
+  });
+});
+
+describe('connect hermes: 預設值偵測', () => {
+  it('detectActiveProfile reads the starred line; default means no profile', () => {
+    expect(detectActiveProfile(ok('  default\n  work *\n'))).toBe('work');
+    expect(detectActiveProfile(ok('* daily  ready\n'))).toBe('daily');
+    expect(detectActiveProfile(ok('default *\nwork\n'))).toBe('');
+    expect(detectActiveProfile(ok('default\nwork\n'))).toBe('');
+    expect(detectActiveProfile(fail())).toBe('');
+  });
+
+  it('interactive flow uses the starred profile and the configured port as defaults', async () => {
+    const s = setup({
+      replies: (a) => {
+        const j = a.join(' ');
+        if (j === 'profile list') return ok('default\ndaily *\n');
+        if (j.endsWith('config get WEBHOOK_PORT')) return ok('WEBHOOK_PORT: 9100');
+        return undefined;
+      },
+    });
+    const seen: Array<{ message: string; default?: string }> = [];
+    const orig = s.deps.prompts.input as unknown as (q: { message: string; default?: string }) => Promise<string>;
+    s.deps.prompts.input = ((q: { message: string; default?: string }) => (seen.push(q), orig(q))) as never;
+    await runConnectHermes(s.ctx, {}, s.deps);
+    expect(seen.find((q) => q.message.includes('profile'))?.default).toBe('daily');
+    expect(seen.find((q) => q.message.includes('埠'))?.default).toBe('9100');
+    expect(s.calls).toContainEqual(['-p', 'daily', 'config', 'get', 'WEBHOOK_PORT']);
   });
 });

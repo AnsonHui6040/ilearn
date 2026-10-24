@@ -7,7 +7,7 @@
 | 項目 | 結果 |
 | --- | --- |
 | `npm run typecheck`、`npm run lint`、`npm run build` | exit 0 |
-| `npm test` | 34 個測試檔，578 個測試全部通過（新增 49 個：`tests/delivery-adapters.test.ts` 25 個、`tests/connect-hermes.test.ts` 24 個） |
+| `npm test` | 33 個測試檔，589 個測試全部通過（新增 60 個：`tests/delivery-adapters.test.ts` 25 個、`tests/connect-hermes.test.ts` 35 個） |
 
 涵蓋：舊設定 `delivery.hook` 沿用為 `delivery.cli`、state 鍵轉換、`status` 同時提供 `cli` 與 `hook`、V2 簽名以 Hermes 公式重算比對、沒有 secret 時不送簽名標頭、`X-Request-ID` 等於 `event_id`、secret 不出現在 `status`／`config get`／MCP、agent 不能修改 `delivery.*`、測試事件隔離、四級狀態轉換、24 小時逾時清理、處理失敗不移動 cursor、離線補讀、重新啟動後不重送、未設定資料夾時 agent 讀取回報錯誤而不是空清單。
 
@@ -52,12 +52,25 @@
 
 未驗證：真正的 Hermes 指令輸出文字（`cron status` 判斷是否執行中的字樣）、`--cron-job` 是否存在於使用者安裝的版本、排程工作的 session 是否有終端機工具。這些都會在使用者於 Linux 執行 `ilearn connect hermes` 時由偵測表與四級測試直接顯示。
 
+## agent 提出、使用者確認（`--prompt`／`--request`／`approve`）模擬端到端（2026-10-24）
+
+使用者測試回報：webhook 沒有被啟用；提問應由 agent 回答。改為 agent 提出連接申請、使用者只在終端確認，並以 Hermes 自己的 `config set` 啟用 webhook。假 gateway 一開始沒有啟動，只有在 `WEBHOOK_ENABLED=true` 後 `gateway restart` 才會啟動。
+
+| 步驟 | 執行者 | 結果 |
+| --- | --- | --- |
+| `ilearn connect hermes --prompt --agent hermes --json`：取得排程名稱、`every 5m`、`origin` 與固定提示詞 | agent（由 Claude 扮演） | PASS |
+| 以自己的排程工具建立 `thu-ilearn-inbox` | agent（模擬） | PASS |
+| `ilearn connect hermes --request --profile daily --agent hermes --port 18644`：只呼叫唯讀指令（`--version`、`cron list`、`webhook subscribe --help`、`webhook list`、`config get WEBHOOK_PORT`），寫入 0600 的申請檔與 6 碼確認代碼 | agent | PASS |
+| `approve`：核對代碼 → 確認排程存在 → `/health` 沒有回應 → `config set WEBHOOK_ENABLED true`、`config set WEBHOOK_PORT 18644`、`gateway restart -y` → 接收端啟用 | 使用者確認（腳本回答「是」） | PASS |
+| 建立路由 `--cron-job thu-ilearn-inbox`、ilearn webhook 指向路由並帶 secret；畫面只顯示 `--secret ***` | 使用者確認 | PASS |
+| 四級測試全 PASS，測試成功訊息只送出一次；申請檔在完成後刪除 | 自動 | PASS |
+
 ## 真正的 agent 端到端
 
 | 項目 | 狀態 |
 | --- | --- |
 | Claude（本 session）依 AGENTS.md 完成四級測試與正式事件的讀取、失敗回報、ACK | PASS（使用模擬接收器，不是 Hermes） |
-| Hermes：使用者在 Linux 執行 `ilearn connect hermes --profile daily`，四級測試全 PASS，並在通知頻道收到「thu-ilearn 推送測試成功」 | TBD（需要使用者在 Linux 的 Hermes 上執行） |
+| Hermes：在 Linux 的 Hermes 對話貼上 README「連接 Hermes」提示詞，Hermes 建立排程並送出申請；使用者執行 `ilearn connect approve`，四級測試全 PASS，並在同一個對話收到「thu-ilearn 推送測試成功」 | TBD（需要使用者在 Linux 的 Hermes 上執行） |
 
 ## 尚未能在目前環境驗證
 

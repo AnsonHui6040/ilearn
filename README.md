@@ -194,13 +194,31 @@ webhook 設定 secret 後，每個請求都會帶 `X-Webhook-Timestamp`（Unix �
 
 ### 連接 Hermes
 
-在安裝 Hermes 的機器上執行 `ilearn connect hermes [--profile <名稱>]`（需要互動終端，且已完成 `ilearn setup`）。它會先偵測 `hermes` 的版本、排程器、gateway、webhook 是否支援 `--cron-job` 與健康檢查，列出結果後再詢問 profile、agent 名稱、通知目標（例如 `telegram`）與 webhook 埠，接著逐項確認：
+建議由 Hermes 裡的 agent 負責設定，你只要核對代碼、確認系統更改。profile、通知目標、埠這些問題由 agent 回答，不用你自己填。
 
-1. 建立排程工作 `thu-ilearn-inbox`（每 5 分鐘讀取事件並通知，沒有內容時回覆 `[SILENT]`）。
-2. Hermes 支援 `--cron-job` 且 webhook 接收端正常時，建立 webhook 路由 `thu-ilearn`，並把 ilearn 的 webhook 設為該路由（secret 自動產生，不會顯示）。接收端沒有啟用時，可選擇補上 profile `.env` 的 `WEBHOOK_ENABLED`、`WEBHOOK_PORT` 並重新啟動 gateway；不啟用就只用排程輪詢，新事件最多延遲 5 分鐘。
-3. 自動執行推送測試與 `hermes cron run thu-ilearn-inbox`，每 10 秒查一次四級結果，最多 6 分鐘。
+1. 把下面的提示詞貼給 Hermes，在你想收通知的那個對話貼（通知會送回這個對話）：
 
-每項更改都要你確認，拒絕的項目會略過。要還原請執行 `ilearn connect hermes --remove`，它會逐項確認後刪除排程工作與路由，並關閉 ilearn 的 webhook。
+   ```text
+   請幫我連接 thu-ilearn 的通知。先閱讀 thu-ilearn 的 AGENTS.md「Hermes 整合」，然後依序做：
+   1. 確認你自己的 profile（看 HERMES_HOME，或 hermes profile list 標有 * 的那一行；預設 profile 用空字串），以及我實際使用的 ILEARN_HOME（預設 ~/.thu-ilearn）。
+   2. 執行 ilearn connect hermes --prompt --agent <你的名稱> --json，取得固定提示詞。
+   3. 用你自己的 cron 工具在這個對話建立排程工作：名稱 thu-ilearn-inbox、每 5 分鐘、通知送往這個對話（origin）、提示詞逐字使用上一步的內容，不要改寫。
+   4. 執行 ilearn connect hermes --request --profile <你的 profile> --agent <你的名稱>，把輸出的確認代碼告訴我。
+   5. 等我在自己的終端執行 ilearn connect approve 並回覆完成，再用 ilearn delivery test --status <test_id> 確認四級都是 PASS。
+   不可以執行 ilearn connect approve，也不可以修改我的 Hermes 設定或 ilearn 設定。
+   ```
+
+2. Hermes 給你確認代碼後，在自己的終端執行 `ilearn connect approve`（需要互動終端，且已完成 `ilearn setup`）。核對畫面上的代碼與 Hermes 說的一樣，才會繼續。
+
+`approve` 會先確認 Hermes 裡已經有排程工作，再逐項請你確認：
+
+1. 接收端沒有啟用、且 Hermes 支援 `--cron-job` 時，依序執行 `hermes config set WEBHOOK_ENABLED true`、`hermes config set WEBHOOK_PORT <埠>` 與 `hermes gateway restart -y`（profile 不是預設時會帶 `-p <profile>`）。不啟用就只用排程輪詢，新事件最多延遲 5 分鐘。
+2. 建立 webhook 路由 `thu-ilearn`（觸發 agent 建立的排程工作），並把 ilearn 的 webhook 設為該路由（secret 自動產生，不會顯示）。
+3. 執行推送測試，每 10 秒查一次四級結果，最多 6 分鐘。
+
+每項更改都要你確認，拒絕的項目會略過；完成後申請檔會刪除。要還原請執行 `ilearn connect hermes --remove`，它會逐項確認後刪除路由並關閉 ilearn 的 webhook；Hermes 裡的排程工作請 agent 刪除，或執行 `hermes cron remove thu-ilearn-inbox`。
+
+沒有 agent 可用時，也可以在互動終端直接執行 `ilearn connect hermes [--profile <名稱>]`：它會用偵測到的值當預設（標有 `*` 的 profile、`hermes config get WEBHOOK_PORT` 的埠），再詢問 agent 名稱與通知目標，逐項確認後自己建立排程工作與路由並測試。通知目標容易填錯，所以建議走上面由 agent 主導的方式。
 
 ### 測試推送
 
@@ -234,7 +252,10 @@ Transport PASS 只代表通知送達；結果也會標示 webhook 有沒有簽�
 | `ilearn events ack <名稱> <event_id> [--test]` | 標記 agent 已處理到此事件 |
 | `ilearn events report <名稱> <event_id> --status processed\|failed [--note <說明>] [--test]` | agent 回報處理結果；失敗會顯示在 `ilearn status` 與 `ilearn ui`，不移動 ack 進度 |
 | `ilearn delivery test --agent <名稱>`、`ilearn delivery test --status <test_id>` | 送出測試事件；查詢 Transport、Agent、處理、ACK 四級結果 |
-| `ilearn connect hermes [--remove] [--profile <名稱>]` | 自動連接 Hermes：偵測、逐項確認後建立排程工作與 webhook 路由並測試；`--remove` 還原（只能由本人在互動終端執行） |
+| `ilearn connect hermes --prompt --agent <名稱> [--json]` | agent 專用：印出要在 Hermes 對話內建立排程工作的固定內容 |
+| `ilearn connect hermes --request --profile <名稱> --agent <名稱> [--cron-job <名稱>] [--port <埠>] [--json]` | agent 專用：唯讀偵測並提出連接申請，產生確認代碼 |
+| `ilearn connect approve` | 核對代碼後逐項確認，完成 Hermes 設定並測試（只能由本人在互動終端執行） |
+| `ilearn connect hermes [--remove] [--profile <名稱>]` | 互動式連接 Hermes；`--remove` 還原（只能由本人在互動終端執行） |
 | `ilearn summaries pending [--json]` | 列出還沒有摘要（或原文已變動）的公告與教材 |
 | `ilearn summaries write <target_id> --hash <h> [--agent <名稱>]` | 從標準輸入讀取摘要文字（最多 2000 字）並寫入；需要你先允許 agent 寫入摘要 |
 | `ilearn config get [--json]` | 目前的 agent 權限，以及 agent 可以修改的設定值（唯讀） |

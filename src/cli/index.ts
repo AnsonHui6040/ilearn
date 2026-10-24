@@ -267,16 +267,59 @@ delivery
 const connect = program.command('connect').description('自動連接 agent（只能由本人在互動終端操作）');
 connect
   .command('hermes')
-  .description('偵測 Hermes，逐項確認後建立排程工作與 webhook 路由，並執行推送測試')
-  .option('--remove', '移除排程工作、webhook 路由，並關閉 ilearn 的 webhook')
-  .option('--profile <名稱>', 'Hermes profile 名稱')
-  .action(async (o: { remove?: boolean; profile?: string }) => {
+  .description('連接 Hermes。agent 用 --prompt 與 --request（建議）；不帶旗標則由本人在互動終端逐項設定')
+  .option('--prompt', 'agent 專用：印出要在 Hermes 對話內建立排程工作的固定內容（需要 --agent）')
+  .option('--request', 'agent 專用：偵測後提出連接申請並產生確認代碼，不更改任何設定（需要 --profile、--agent）')
+  .option('--remove', '移除排程工作、webhook 路由，並關閉 ilearn 的 webhook（互動終端）')
+  .option('--profile <名稱>', 'Hermes profile 名稱；預設 profile 傳空字串')
+  .option('--agent <名稱>', 'agent 名稱（英數、. _ -，最長 64 字元）')
+  .option('--cron-job <名稱>', '排程工作名稱（預設 thu-ilearn-inbox）')
+  .option('--port <埠>', 'Hermes webhook 埠（預設 8644）')
+  .option('--json', '以 JSON 輸出（--prompt、--request）')
+  .action(
+    async (o: { prompt?: boolean; request?: boolean; remove?: boolean; profile?: string; agent?: string; cronJob?: string; port?: string; json?: boolean }) => {
+      const mod = await import('../connect/hermes.js');
+      if (o.prompt || o.request) {
+        if (o.prompt && o.request) throw new CliExit(1, '--prompt 與 --request 不能同時使用');
+        if (o.remove) throw new CliExit(1, '--remove 只能由本人在互動終端單獨執行');
+        const ctx = createSetUpContext();
+        if (o.agent === undefined) throw new CliExit(1, '請用 --agent 帶入你的 agent 名稱');
+        const deps = mod.defaultHermesDeps();
+        if (o.prompt) {
+          const r = mod.connectPromptCommand(ctx, { agent: o.agent }, deps);
+          out(o.json, r, () => mod.connectPromptText(r));
+          return;
+        }
+        if (o.profile === undefined) throw new CliExit(1, '請用 --profile 帶入 Hermes profile 名稱（預設 profile 傳空字串）');
+        const r = await mod.connectRequestCommand(
+          ctx,
+          { profile: o.profile, agent: o.agent, ...(o.cronJob !== undefined ? { cronJob: o.cronJob } : {}), ...(o.port !== undefined ? { port: Number(o.port) } : {}) },
+          deps,
+        );
+        out(o.json, r, () => mod.connectRequestText(r));
+        return;
+      }
+      const { assertInteractive } = await import('../tui/app.js');
+      assertInteractive(Boolean(process.stdin.isTTY), Boolean(process.stdout.isTTY));
+      const ctx = createSetUpContext();
+      const prompts = await import('@inquirer/prompts');
+      await mod.runConnectHermes(
+        ctx,
+        { ...(o.remove ? { remove: true } : {}), ...(o.profile !== undefined ? { profile: o.profile } : {}), ...(o.cronJob !== undefined ? { cronJob: o.cronJob } : {}) },
+        mod.defaultHermesDeps(prompts),
+      );
+    },
+  );
+connect
+  .command('approve')
+  .description('核對 agent 提出的連接申請，逐項確認後完成 Hermes 設定（只能由本人在互動終端執行）')
+  .action(async () => {
     const { assertInteractive } = await import('../tui/app.js');
     assertInteractive(Boolean(process.stdin.isTTY), Boolean(process.stdout.isTTY));
     const ctx = createSetUpContext();
-    const { defaultHermesDeps, runConnectHermes } = await import('../connect/hermes.js');
+    const mod = await import('../connect/hermes.js');
     const prompts = await import('@inquirer/prompts');
-    await runConnectHermes(ctx, { ...(o.remove ? { remove: true } : {}), ...(o.profile !== undefined ? { profile: o.profile } : {}) }, defaultHermesDeps(prompts));
+    await mod.runConnectApprove(ctx, mod.defaultHermesDeps(prompts));
   });
 
 program

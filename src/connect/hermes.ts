@@ -1,13 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deliveryTestCommand, deliveryTestStatusCommand } from '../cli/commands/delivery.js';
 import { CliExit, type CliContext } from '../cli/context.js';
 import type { Prompts } from '../cli/setup.js';
 import { saveConfig } from '../config/config.js';
+import { writeSecureFile } from '../config/paths.js';
 import type { TestStatus } from '../events/delivery-test.js';
 import { checkAgent } from '../events/outbox.js';
 import { stableNodePath } from '../service/service.js';
@@ -18,6 +18,8 @@ export const CRON_JOB = 'thu-ilearn-inbox';
 export const ROUTE = 'thu-ilearn';
 const SCHEDULE = '*/5 * * * *';
 const DEFAULT_PORT = 8644;
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const REQUEST_TTL_MS = 30 * 60_000;
 
 export interface RunResult {
   code: number;
@@ -33,11 +35,12 @@ export interface HermesDeps {
   now(): Date;
   sleep(ms: number): Promise<void>;
   say(s?: string): void;
-  home: string;
   node: string;
   /** dist/cli/index.js 的絕對路徑 */
   script: string;
   randomSecret(): string;
+  /** 6 個字元的確認代碼 */
+  randomCode(): string;
   pollIntervalMs: number;
   pollTimeoutMs: number;
   /** 等 gateway 重新啟動後再檢查健康 */
@@ -46,7 +49,12 @@ export interface HermesDeps {
   deliveryTest?: (ctx: CliContext, agent: string) => Promise<{ test_id: string }>;
 }
 
-export function defaultHermesDeps(prompts: Pick<Prompts, 'input' | 'confirm'>): HermesDeps {
+const noPrompts: Pick<Prompts, 'input' | 'confirm'> = {
+  input: () => Promise.reject(new Error('此模式不提供互動提問')),
+  confirm: () => Promise.reject(new Error('此模式不提供互動提問')),
+} as never;
+
+export function defaultHermesDeps(prompts: Pick<Prompts, 'input' | 'confirm'> = noPrompts): HermesDeps {
   return {
     run: (cmd, args) => {
       const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 60_000, shell: false });
@@ -65,7 +73,6 @@ export function defaultHermesDeps(prompts: Pick<Prompts, 'input' | 'confirm'>): 
     now: () => new Date(),
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     say: (s = '') => void process.stdout.write(`${s}\n`),
-    home: homedir(),
     // 與背景服務相同：用 PATH 上不帶版本號的 node（例如 /opt/homebrew/bin/node），升級 Node 後提示詞仍然有效
     node: stableNodePath(process.execPath, process.env.PATH, (p) => {
       try {
@@ -76,6 +83,10 @@ export function defaultHermesDeps(prompts: Pick<Prompts, 'input' | 'confirm'>): 
     }),
     script: fileURLToPath(new URL('../cli/index.js', import.meta.url)),
     randomSecret: () => randomBytes(32).toString('hex'),
+    randomCode: () => {
+      const b = randomBytes(6);
+      return Array.from(b, (x) => CODE_CHARS[x % CODE_CHARS.length]).join('');
+    },
     pollIntervalMs: 10_000,
     pollTimeoutMs: 6 * 60_000,
     restartWaitMs: 3000,
@@ -135,6 +146,27 @@ export function displayArgs(args: string[]): string {
 
 const nameRe = (n: string): RegExp => new RegExp(`(^|[^\\w-])${n.replace(/[-.]/g, '\\$&')}(?![\\w-])`);
 
+/** hermes profile list：標有 * 的那一行是目前使用的 profile；default 代表不指定。 */
+export function detectActiveProfile(r: RunResult): string {
+  if (r.code !== 0) return '';
+  for (const raw of r.stdout.split('\n')) {
+    const line = raw.trim();
+    if (!line.startsWith('*') && !line.endsWith('*')) continue;
+    const name = line.replace(/^\*+|\*+$/g, '').trim().split(/\s+/)[0] ?? '';
+    if (name === 'default') return '';
+    return PROFILE_RE.test(name) ? name : '';
+  }
+  return '';
+}
+
+/** hermes config get WEBHOOK_PORT 印出數字時採用，其餘情況回傳 null。 */
+export function detectPort(r: RunResult): number | null {
+  if (r.code !== 0) return null;
+  const m = /\b(\d{2,5})\b/.exec(r.stdout);
+  const n = m?.[1] === undefined ? NaN : Number(m[1]);
+  return n >= 1 && n <= 65535 ? n : null;
+}
+
 export function schedulerRunning(r: RunResult): boolean {
   const t = `${r.stdout}\n${r.stderr}`;
   if (r.code !== 0) return false;
@@ -142,37 +174,11 @@ export function schedulerRunning(r: RunResult): boolean {
   return /running|active|enabled|ok|執行中|運行/i.test(t);
 }
 
-export function envFilePath(home: string, profile: string): string {
-  return profile === '' ? join(home, '.hermes', '.env') : join(home, '.hermes', 'profiles', profile, '.env');
-}
-
-/** 只補上缺少的鍵，不改寫其他行；回傳實際新增的鍵與「已存在但值不同」的鍵。 */
-export function appendMissingEnv(
-  file: string,
-  wanted: Record<string, string>,
-): { added: string[]; differing: string[] } {
-  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
-  const present = new Map<string, string>();
-  for (const line of text.split('\n')) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-    if (m?.[1] !== undefined) present.set(m[1], (m[2] ?? '').replace(/^["']|["']$/g, ''));
-  }
-  const added: string[] = [];
-  const differing: string[] = [];
-  let add = '';
-  for (const [k, v] of Object.entries(wanted)) {
-    if (!present.has(k)) {
-      add += `${k}=${v}\n`;
-      added.push(k);
-    } else if (present.get(k) !== v) differing.push(k);
-  }
-  if (add !== '') appendFileSync(file, `${text !== '' && !text.endsWith('\n') ? '\n' : ''}${add}`);
-  return { added, differing };
-}
-
 export interface ConnectOptions {
   profile?: string;
   remove?: boolean;
+  /** 還原時要刪除的排程工作名稱（預設 thu-ilearn-inbox） */
+  cronJob?: string;
 }
 
 export interface ConnectResult {
@@ -197,11 +203,12 @@ export async function runConnectHermes(ctx: CliContext, o: ConnectOptions, d: He
   say('連接 Hermes：偵測環境後逐項確認，不會在沒有你同意的情況下更改任何設定。');
   say();
 
-  // 1. 提問：profile
+  // 1. 提問：profile（預設值取自 hermes profile list 標有 * 的那一行）
+  const profileDefault = o.profile ?? detectActiveProfile(d.run('hermes', ['profile', 'list']));
   const profile = (
     await d.prompts.input({
       message: 'Hermes profile 名稱（不指定請留空）',
-      default: o.profile ?? '',
+      default: profileDefault,
       validate: (v: string) => PROFILE_RE.test(v.trim()) || 'profile 只能用英數、. _ -',
     })
   ).trim();
@@ -218,7 +225,7 @@ export async function runConnectHermes(ctx: CliContext, o: ConnectOptions, d: He
     );
   }
 
-  if (o.remove === true) return removeFlow(ctx, d, base, say, yes, changes, result);
+  if (o.remove === true) return removeFlow(ctx, d, base, o.cronJob ?? CRON_JOB, say, yes, changes, result);
 
   // 2. 提問：agent、目標、埠
   const agent = (
@@ -245,7 +252,7 @@ export async function runConnectHermes(ctx: CliContext, o: ConnectOptions, d: He
   const portText = (
     await d.prompts.input({
       message: 'Hermes webhook 埠',
-      default: String(DEFAULT_PORT),
+      default: String(detectPort(hermes(['config', 'get', 'WEBHOOK_PORT'])) ?? DEFAULT_PORT),
       validate: (v: string) => (/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= 65535) || '請輸入 1 到 65535 的埠號',
     })
   ).trim();
@@ -338,18 +345,18 @@ export async function runConnectHermes(ctx: CliContext, o: ConnectOptions, d: He
     say('這個版本的 Hermes 不支援 webhook subscribe --cron-job，只用排程輪詢（新事件最多延遲 5 分鐘）；ilearn 的 webhook 設定維持原狀。');
   } else {
     if (!healthy) {
-      healthy = await tryEnableWebhook(d, base, profile, port, healthUrl, say, yes, changes);
+      healthy = await tryEnableWebhook(d, base, port, healthUrl, say, yes, changes);
     }
     if (!healthy) {
       say('Hermes 的 webhook 接收端沒有啟用，只用排程輪詢（新事件最多延遲 5 分鐘）；ilearn 的 webhook 設定維持原狀。');
     } else {
-      await webhookFlow(ctx, d, base, port, routeExists, secrets, say, yes, changes);
+      await webhookFlow(ctx, d, base, port, CRON_JOB, routeExists, secrets, say, yes, changes);
     }
   }
   say();
 
   // 7. 測試
-  if (cronOk) result.testPassed = await runTest(ctx, d, base, agent, say, `http://127.0.0.1:${port}/webhooks/${ROUTE}`);
+  if (cronOk) result.testPassed = await runTest(ctx, d, base, agent, CRON_JOB, say, `http://127.0.0.1:${port}/webhooks/${ROUTE}`);
 
   // 8. 摘要
   say('本次更改');
@@ -362,28 +369,33 @@ export async function runConnectHermes(ctx: CliContext, o: ConnectOptions, d: He
 async function tryEnableWebhook(
   d: HermesDeps,
   base: string[],
-  profile: string,
   port: number,
   healthUrl: string,
   say: (s?: string) => void,
   yes: (m: string, def: boolean) => Promise<boolean>,
   changes: string[],
 ): Promise<boolean> {
-  const file = envFilePath(d.home, profile);
-  say(`Hermes 的 webhook 接收端（${healthUrl}）沒有回應。`);
-  if (await yes(`要在 ${file} 補上 WEBHOOK_ENABLED=true 與 WEBHOOK_PORT=${port} 嗎？（只新增缺少的項目，不改其他行）`, true)) {
-    try {
-      const r = appendMissingEnv(file, { WEBHOOK_ENABLED: 'true', WEBHOOK_PORT: String(port) });
-      if (r.added.length > 0) changes.push(`在 ${file} 新增 ${r.added.join('、')}（要還原請手動刪除這幾行）`);
-      else say('  需要的項目都已存在，沒有寫入。');
-      if (r.differing.length > 0) say(`  ${r.differing.join('、')} 已存在但值不同，沒有改動；請自行確認 ${file}。`);
-    } catch (e) {
-      say(`  寫入失敗：${e instanceof Error ? e.message : String(e)}`);
+  say(`Hermes 的 webhook 接收端（${healthUrl}）沒有回應，需要用 Hermes 自己的指令啟用。`);
+  const enable = ['config', 'set', 'WEBHOOK_ENABLED', 'true'];
+  if (!(await yes(`要執行 ${displayArgs([...base, ...enable])} 嗎？`, true))) return false;
+  const e = d.run('hermes', [...base, ...enable]);
+  if (e.code !== 0) {
+    say(`  設定失敗：${summarize(e)}`);
+    return false;
+  }
+  changes.push('hermes config set WEBHOOK_ENABLED true');
+  const portCmd = ['config', 'set', 'WEBHOOK_PORT', String(port)];
+  if (await yes(`要執行 ${displayArgs([...base, ...portCmd])} 嗎？`, true)) {
+    const r = d.run('hermes', [...base, ...portCmd]);
+    if (r.code !== 0) {
+      say(`  設定失敗：${summarize(r)}`);
       return false;
     }
+    changes.push(`hermes config set WEBHOOK_PORT ${port}`);
   }
-  if (!(await yes(`要重新啟動 gateway（${displayArgs([...base, 'gateway', 'restart'])}）讓設定生效嗎？`, true))) return false;
-  const rs = d.run('hermes', [...base, 'gateway', 'restart']);
+  const restart = ['gateway', 'restart', '-y'];
+  if (!(await yes(`要執行 ${displayArgs([...base, ...restart])} 讓設定生效嗎？`, true))) return false;
+  const rs = d.run('hermes', [...base, ...restart]);
   if (rs.code !== 0) {
     say(`  gateway 重新啟動失敗：${summarize(rs)}`);
     return false;
@@ -400,6 +412,7 @@ async function webhookFlow(
   d: HermesDeps,
   base: string[],
   port: number,
+  cronJob: string,
   routeExists: boolean,
   secrets: string[],
   say: (s?: string) => void,
@@ -407,7 +420,7 @@ async function webhookFlow(
   changes: string[],
 ): Promise<void> {
   const hermes = (sub: string[]) => d.run('hermes', [...base, ...sub]);
-  say(`更改 2：webhook 路由 ${ROUTE}（觸發排程工作 ${CRON_JOB}）`);
+  say(`更改 2：webhook 路由 ${ROUTE}（觸發排程工作 ${cronJob}）`);
   if (routeExists) {
     if (!(await yes(`已有路由 ${ROUTE}，要取代它嗎？`, false))) {
       say('  略過，沿用現有路由；ilearn 的 webhook 設定維持原狀。');
@@ -427,7 +440,7 @@ async function webhookFlow(
   secrets.push(secret);
   const args = [
     'webhook', 'subscribe', ROUTE,
-    '--cron-job', CRON_JOB,
+    '--cron-job', cronJob,
     '--secret', secret,
     '--description', 'thu-ilearn 新事件通知',
     '--prompt', 'thu-ilearn 有新事件，請依排程工作的步驟處理。',
@@ -464,6 +477,7 @@ async function runTest(
   d: HermesDeps,
   base: string[],
   agent: string,
+  cronJob: string,
   say: (s?: string) => void,
   routeUrl: string,
 ): Promise<boolean> {
@@ -483,8 +497,8 @@ async function runTest(
     say(`  已建立測試 ${testId}，webhook 已觸發排程工作……`);
   } else {
     say(`  已建立測試 ${testId}，執行排程工作……`);
-    const run = d.run('hermes', [...base, 'cron', 'run', CRON_JOB]);
-    if (run.code !== 0) say(`  ${displayArgs([...base, 'cron', 'run', CRON_JOB])} 失敗：${summarize(run)}`);
+    const run = d.run('hermes', [...base, 'cron', 'run', cronJob]);
+    if (run.code !== 0) say(`  ${displayArgs([...base, 'cron', 'run', cronJob])} 失敗：${summarize(run)}`);
   }
 
   const shown = new Map<string, string>();
@@ -523,6 +537,7 @@ async function removeFlow(
   ctx: CliContext,
   d: HermesDeps,
   base: string[],
+  cronJob: string,
   say: (s?: string) => void,
   yes: (m: string, def: boolean) => Promise<boolean>,
   changes: string[],
@@ -532,14 +547,14 @@ async function removeFlow(
   say('移除 Hermes 整合：逐項確認。');
   const cronList = hermes(['cron', 'list']);
   const whList = hermes(['webhook', 'list']);
-  const cronExists = cronList.code === 0 && nameRe(CRON_JOB).test(cronList.stdout);
+  const cronExists = cronList.code === 0 && nameRe(cronJob).test(cronList.stdout);
   const routeExists = whList.code === 0 && nameRe(ROUTE).test(whList.stdout);
 
-  if (!cronExists) say(`沒有找到排程工作 ${CRON_JOB}，略過。`);
-  else if (await yes(`要刪除排程工作 ${CRON_JOB} 嗎？`, false)) {
-    say(`  ${displayArgs([...base, 'cron', 'remove', CRON_JOB])}`);
-    const r = hermes(['cron', 'remove', CRON_JOB]);
-    if (r.code === 0) changes.push(`刪除排程工作 ${CRON_JOB}`);
+  if (!cronExists) say(`沒有找到排程工作 ${cronJob}，略過。`);
+  else if (await yes(`要刪除排程工作 ${cronJob} 嗎？（不論是 ilearn 或 agent 建立的都會刪除）`, false)) {
+    say(`  ${displayArgs([...base, 'cron', 'remove', cronJob])}`);
+    const r = hermes(['cron', 'remove', cronJob]);
+    if (r.code === 0) changes.push(`刪除排程工作 ${cronJob}`);
     else say(`  失敗：${summarize(r)}`);
   }
   if (!routeExists) say(`沒有找到 webhook 路由 ${ROUTE}，略過。`);
@@ -563,5 +578,267 @@ async function removeFlow(
   if (changes.length === 0) say('  沒有更改任何設定。');
   for (const c of changes) say(`  - ${c}`);
   if (changes.length > 0) say('要重新連接請執行：ilearn connect hermes');
+  return result;
+}
+
+// ───────── agent 主導的連接：--prompt、--request，以及使用者端的 approve ─────────
+
+const CRON_JOB_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+function checkProfile(profile: string): string {
+  if (!PROFILE_RE.test(profile.trim())) throw new CliExit(1, 'profile 只能用英數、. _ -（不指定請傳空字串）');
+  return profile.trim();
+}
+
+function checkPort(port: number): number {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new CliExit(1, '請輸入 1 到 65535 的埠號');
+  return port;
+}
+
+function checkCronJob(name: string): string {
+  if (!CRON_JOB_RE.test(name)) throw new CliExit(1, '排程工作名稱只能用英數、. _ -，最長 64 字元');
+  return name;
+}
+
+export interface ConnectPrompt {
+  agent: string;
+  cron_job: string;
+  schedule: string;
+  cron_expression: string;
+  deliver: 'origin';
+  prompt: string;
+}
+
+/** `connect hermes --prompt`：給 agent 在自己的對話內建立排程工作用的固定內容。 */
+export function connectPromptCommand(ctx: CliContext, o: { agent: string }, d: Pick<HermesDeps, 'node' | 'script'>): ConnectPrompt {
+  try {
+    checkAgent(o.agent);
+  } catch (e) {
+    throw new CliExit(1, e instanceof Error ? e.message : String(e));
+  }
+  const agent = o.agent;
+  return {
+    agent,
+    cron_job: CRON_JOB,
+    schedule: 'every 5m',
+    cron_expression: SCHEDULE,
+    deliver: 'origin',
+    prompt: buildCronPrompt({ node: d.node, script: d.script, root: ctx.root, agent }),
+  };
+}
+
+export function connectPromptText(p: ConnectPrompt): string {
+  return [
+    '請用你自己的排程工具（cron）在目前這個對話建立排程工作，設定如下，不要改動：',
+    `- 名稱：${p.cron_job}`,
+    '- 頻率：每 5 分鐘（every 5m）',
+    '- 通知送往：目前這個對話（deliver 設為 origin）',
+    '- 提示詞：照下面兩條分隔線之間的內容逐字使用，不要改寫、不要補充、不要刪減。',
+    '',
+    '----------------',
+    p.prompt,
+    '----------------',
+    '',
+    '建立完成後，執行 ilearn connect hermes --request 提出連接申請（做法見 AGENTS.md「Hermes 整合」）。',
+  ].join('\n');
+}
+
+export interface ConnectRequest {
+  code: string;
+  profile: string;
+  agent: string;
+  cron_job: string;
+  port: number;
+  root: string;
+  detected: Record<string, string>;
+  created_at: string;
+  expires_at: string;
+}
+
+export const requestFile = (root: string): string => join(root, 'data', 'connect-request.json');
+
+export interface RequestOutput extends ConnectRequest {
+  warnings: string[];
+  next_step: string;
+}
+
+/** `connect hermes --request`：只做唯讀偵測，寫入申請檔與確認代碼，不更改任何設定。 */
+export async function connectRequestCommand(
+  ctx: CliContext,
+  o: { profile: string; agent: string; cronJob?: string; port?: number },
+  d: HermesDeps,
+): Promise<RequestOutput> {
+  const profile = checkProfile(o.profile);
+  try {
+    checkAgent(o.agent);
+  } catch (e) {
+    throw new CliExit(1, e instanceof Error ? e.message : String(e));
+  }
+  const cronJob = checkCronJob(o.cronJob ?? CRON_JOB);
+  const port = checkPort(o.port ?? DEFAULT_PORT);
+  const base = profile === '' ? [] : ['-p', profile];
+  const hermes = (sub: string[]): RunResult => d.run('hermes', [...base, ...sub]);
+
+  const ver = hermes(['--version']);
+  if (ver.code !== 0) {
+    throw new CliExit(1, ver.code === 127 ? '找不到 hermes 指令，請先確認 hermes 在 PATH 內。' : `hermes --version 失敗：${summarize(ver)}`);
+  }
+  const cronList = hermes(['cron', 'list']);
+  const subHelp = hermes(['webhook', 'subscribe', '--help']);
+  const whList = hermes(['webhook', 'list']);
+  const cfgPort = hermes(['config', 'get', 'WEBHOOK_PORT']);
+  const healthy = await d.health(`http://127.0.0.1:${port}/health`);
+
+  const cronFound = cronList.code === 0 && nameRe(cronJob).test(cronList.stdout);
+  const warnings: string[] = [];
+  if (!cronFound) {
+    warnings.push(`cron list 找不到排程工作 ${cronJob}：請先用你的排程工具建立，使用者執行 approve 時會因此被拒絕。`);
+  }
+  const detected: Record<string, string> = {
+    version: summarize(ver),
+    cron_job: cronList.code === 0 ? (cronFound ? `已有 ${cronJob}` : `沒有 ${cronJob}`) : summarize(cronList),
+    webhook_cron_job_flag: subHelp.code !== 0 ? summarize(subHelp) : `${subHelp.stdout}\n${subHelp.stderr}`.includes('--cron-job') ? '支援' : '不支援',
+    webhook_route: whList.code === 0 ? (nameRe(ROUTE).test(whList.stdout) ? `已有路由 ${ROUTE}` : `沒有路由 ${ROUTE}`) : summarize(whList),
+    configured_port: detectPort(cfgPort)?.toString() ?? '未設定',
+    health: healthy ? '正常' : '沒有回應',
+  };
+  const code = d.randomCode();
+  const at = d.now();
+  const req: ConnectRequest = {
+    code,
+    profile,
+    agent: o.agent,
+    cron_job: cronJob,
+    port,
+    root: ctx.root,
+    detected,
+    created_at: at.toISOString(),
+    expires_at: new Date(at.getTime() + REQUEST_TTL_MS).toISOString(),
+  };
+  writeSecureFile(requestFile(ctx.root), `${JSON.stringify(req, null, 2)}\n`);
+  return { ...req, warnings, next_step: `請使用者在自己的終端執行 ilearn connect approve，並核對確認代碼 ${code}` };
+}
+
+export function connectRequestText(r: RequestOutput): string {
+  return [
+    ...r.warnings.map((w) => `警告：${w}`),
+    `確認代碼：${r.code}（30 分鐘內有效）`,
+    `profile：${r.profile === '' ? '（預設）' : r.profile}；agent：${r.agent}；排程工作：${r.cron_job}；webhook 埠：${r.port}`,
+    r.next_step,
+  ].join('\n');
+}
+
+function loadRequest(ctx: CliContext): ConnectRequest {
+  const file = requestFile(ctx.root);
+  if (!existsSync(file)) {
+    throw new CliExit(1, '沒有待確認的連接申請。請先請你的 agent 執行 ilearn connect hermes --request。');
+  }
+  let r: Partial<ConnectRequest>;
+  try {
+    r = JSON.parse(readFileSync(file, 'utf8')) as Partial<ConnectRequest>;
+  } catch {
+    throw new CliExit(1, '連接申請檔無法讀取。請請 agent 重新執行 ilearn connect hermes --request。');
+  }
+  if (
+    typeof r.code !== 'string' || typeof r.profile !== 'string' || typeof r.agent !== 'string' ||
+    typeof r.cron_job !== 'string' || typeof r.port !== 'number' || typeof r.root !== 'string' ||
+    typeof r.expires_at !== 'string' || typeof r.detected !== 'object' || r.detected === null
+  ) {
+    throw new CliExit(1, '連接申請檔格式不正確。請請 agent 重新執行 ilearn connect hermes --request。');
+  }
+  return r as ConnectRequest;
+}
+
+/** `connect approve`：使用者核對代碼後，逐項確認系統更改。 */
+export async function runConnectApprove(ctx: CliContext, d: HermesDeps): Promise<ConnectResult> {
+  const req = loadRequest(ctx);
+  if (!(Date.parse(req.expires_at) > d.now().getTime())) {
+    throw new CliExit(1, '連接申請已過期（有效 30 分鐘）。請請 agent 重新執行 ilearn connect hermes --request。');
+  }
+  if (req.root !== ctx.root) {
+    throw new CliExit(
+      1,
+      `申請的資料夾（${req.root}）與目前的資料夾（${ctx.root}）不同，可能是 ILEARN_HOME 設定不一致。請確認你的終端與 agent 使用同一個資料夾，再請 agent 重新申請。`,
+    );
+  }
+  const profile = checkProfile(req.profile);
+  checkCronJob(req.cron_job);
+  checkPort(req.port);
+  try {
+    checkAgent(req.agent);
+  } catch (e) {
+    throw new CliExit(1, e instanceof Error ? e.message : String(e));
+  }
+
+  const secrets: string[] = [];
+  const say = (s = ''): void => {
+    let t = s;
+    for (const x of secrets) if (x !== '') t = t.split(x).join('***');
+    d.say(t);
+  };
+  const changes: string[] = [];
+  const result: ConnectResult = { changes, testPassed: null };
+  const yes = async (message: string, def: boolean): Promise<boolean> => d.prompts.confirm({ message, default: def });
+  const base = profile === '' ? [] : ['-p', profile];
+  const hermes = (sub: string[]): RunResult => d.run('hermes', [...base, ...sub]);
+
+  say('連接 Hermes：以下是 agent 提出的申請。');
+  const rows: [string, string][] = [
+    ['profile', profile === '' ? '（預設）' : profile],
+    ['agent', req.agent],
+    ['排程工作', req.cron_job],
+    ['webhook 埠', String(req.port)],
+    ['資料夾', req.root],
+    ...Object.entries(req.detected).map(([k, v]): [string, string] => [`偵測：${k}`, String(v)]),
+  ];
+  const w = Math.max(...rows.map(([k]) => k.length));
+  for (const [k, v] of rows) say(`  ${k.padEnd(w)}  ${v}`);
+  say();
+  if (!(await yes(`確認代碼是 ${req.code}。和 agent 告訴你的代碼一致嗎？`, false))) {
+    say('代碼不一致，已停止，沒有更改任何設定。');
+    return result;
+  }
+
+  const ver = hermes(['--version']);
+  if (ver.code !== 0) throw new CliExit(1, `hermes --version 失敗：${summarize(ver)}。請先確認 Hermes 可以正常執行。`);
+  const cronList = hermes(['cron', 'list']);
+  if (!(cronList.code === 0 && nameRe(req.cron_job).test(cronList.stdout))) {
+    throw new CliExit(1, `Hermes 裡還沒有排程工作 ${req.cron_job}。請請 agent 在它的對話裡先建立（做法見 AGENTS.md「Hermes 整合」），再重新執行 ilearn connect approve。`);
+  }
+  say(`已確認 Hermes 有排程工作 ${req.cron_job}。`);
+
+  const subHelp = hermes(['webhook', 'subscribe', '--help']);
+  const whList = hermes(['webhook', 'list']);
+  const cronJobSupported = subHelp.code === 0 && `${subHelp.stdout}\n${subHelp.stderr}`.includes('--cron-job');
+  const routeExists = whList.code === 0 && nameRe(ROUTE).test(whList.stdout);
+  const healthUrl = `http://127.0.0.1:${req.port}/health`;
+  let healthy = await d.health(healthUrl);
+  say();
+
+  if (!cronJobSupported) {
+    say('這個版本的 Hermes 不支援 webhook subscribe --cron-job，只用排程輪詢（新事件最多延遲 5 分鐘）；ilearn 的 webhook 設定維持原狀。');
+  } else {
+    if (!healthy) healthy = await tryEnableWebhook(d, base, req.port, healthUrl, say, yes, changes);
+    if (!healthy) {
+      say('Hermes 的 webhook 接收端沒有啟用，只用排程輪詢（新事件最多延遲 5 分鐘）；ilearn 的 webhook 設定維持原狀。');
+    } else {
+      await webhookFlow(ctx, d, base, req.port, req.cron_job, routeExists, secrets, say, yes, changes);
+    }
+  }
+  say();
+
+  result.testPassed = await runTest(ctx, d, base, req.agent, req.cron_job, say, `http://127.0.0.1:${req.port}/webhooks/${ROUTE}`);
+
+  try {
+    unlinkSync(requestFile(ctx.root));
+  } catch {
+    // 申請檔已不存在
+  }
+  say();
+  say('本次更改');
+  if (changes.length === 0) say('  沒有更改任何設定。');
+  for (const c of changes) say(`  - ${c}`);
+  say('要還原請執行：ilearn connect hermes --remove（會逐項確認，刪除 webhook 路由並關閉 ilearn 的 webhook）。');
+  say(`Hermes 裡的排程工作 ${req.cron_job} 是 agent 建立的：可以請 agent 刪除，或執行 hermes${profile === '' ? '' : ` -p ${profile}`} cron remove ${req.cron_job}。`);
   return result;
 }
