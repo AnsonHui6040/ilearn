@@ -200,7 +200,7 @@ webhook 設定 secret 後，每個請求都會帶 `X-Webhook-Timestamp`（Unix �
 
    ```text
    請幫我連接 thu-ilearn 的通知。先閱讀 thu-ilearn 的 AGENTS.md「Hermes 整合」，然後依序做：
-   1. 確認你自己的 profile（看 HERMES_HOME，或 hermes profile list 標有 * 的那一行；預設 profile 用空字串），以及我實際使用的 ILEARN_HOME（預設 ~/.thu-ilearn）。
+   1. 確認你自己的 profile（看 HERMES_HOME，或 hermes profile list 標有 * 的那一行；預設 profile 用空字串）。你的 HOME 可能是 profile 自己的資料夾，所以照本 README「交給 AI agent 安裝」第 1 步，從系統帳號資料取得我真正的家目錄，並找出我的 Node 與 thu-ilearn 位置；之後每一個 ilearn 指令都用 ILEARN_HOME="<我的家目錄>/.thu-ilearn" "<NODE>" "<NPM_ROOT>/thu-ilearn/dist/cli/index.js" 執行（下文寫 ilearn 的地方都照這樣換）。
    2. 執行 ilearn connect hermes --prompt --agent <你的名稱> --json，取得固定提示詞。
    3. 用你自己的 cron 工具在這個對話建立排程工作：名稱 thu-ilearn-inbox、每 5 分鐘、通知送往這個對話（origin）、提示詞逐字使用上一步的內容，不要改寫。
    4. 執行 ilearn connect hermes --request --profile <你的 profile> --agent <你的名稱>，把輸出的確認代碼告訴我。
