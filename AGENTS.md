@@ -89,6 +89,8 @@ Transport PASS 只代表通知送達，不代表你收得到或處理得了。�
 
 ### Hermes 整合
 
+建議使用者直接執行 `ilearn connect hermes`：它會偵測 Hermes，逐項詢問後建立排程工作 `thu-ilearn-inbox` 與 webhook 路由 `thu-ilearn`，並自動跑一次推送測試；`ilearn connect hermes --remove` 可還原。這個指令只能由使用者本人在互動終端執行，agent 不要執行（非互動終端會被拒絕），只要提醒使用者自己執行。以下是手動設定的做法與背後原理。
+
 Hermes 官方文件說明，由 webhook 觸發的那一次執行預設只能用 `web_search`、`web_extract`、`vision_analyze`、`clarify`，不能執行終端指令，所以那一次執行不能呼叫 `ilearn`。因此分成兩部分：
 
 1. webhook 路由只負責通知使用者「有新事件」。使用者在 Hermes 端執行（secret 與 ilearn 的 webhook secret 相同，由使用者自己輸入）：
@@ -355,6 +357,7 @@ Hermes 官方文件說明，由 webhook 觸發的那一次執行預設只能用 
 - 觸發登入（`ilearn login`、`ilearn setup`）。登入過期時請使用者自己處理。
 - 安裝或移除背景服務（`ilearn service install`、`uninstall` 在非互動終端會被拒絕）。
 - 更新程式（`ilearn update` 在非互動終端會被拒絕）；有新版本時提醒使用者自己更新。
+- 執行 `ilearn connect hermes`（含 `--remove`）。這會更改使用者的 Hermes 設定，只能由使用者本人在互動終端執行。
 - 開啟 `ilearn ui` 代為操作。這是給使用者本人的介面，在非互動終端執行會被拒絕；需要修改設定時請提醒使用者自己開啟。
 - 直接連線 iLearn 或修改 iLearn 上的任何資料。
 

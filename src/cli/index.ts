@@ -264,6 +264,21 @@ delivery
     );
   });
 
+const connect = program.command('connect').description('自動連接 agent（只能由本人在互動終端操作）');
+connect
+  .command('hermes')
+  .description('偵測 Hermes，逐項確認後建立排程工作與 webhook 路由，並執行推送測試')
+  .option('--remove', '移除排程工作、webhook 路由，並關閉 ilearn 的 webhook')
+  .option('--profile <名稱>', 'Hermes profile 名稱')
+  .action(async (o: { remove?: boolean; profile?: string }) => {
+    const { assertInteractive } = await import('../tui/app.js');
+    assertInteractive(Boolean(process.stdin.isTTY), Boolean(process.stdout.isTTY));
+    const ctx = createSetUpContext();
+    const { defaultHermesDeps, runConnectHermes } = await import('../connect/hermes.js');
+    const prompts = await import('@inquirer/prompts');
+    await runConnectHermes(ctx, { ...(o.remove ? { remove: true } : {}), ...(o.profile !== undefined ? { profile: o.profile } : {}) }, defaultHermesDeps(prompts));
+  });
+
 program
   .command('courses')
   .description('課程列表')

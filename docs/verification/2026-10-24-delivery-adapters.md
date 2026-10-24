@@ -7,7 +7,7 @@
 | 項目 | 結果 |
 | --- | --- |
 | `npm run typecheck`、`npm run lint`、`npm run build` | exit 0 |
-| `npm test` | 33 個測試檔，554 個測試全部通過（新增 25 個，在 `tests/delivery-adapters.test.ts`） |
+| `npm test` | 34 個測試檔，578 個測試全部通過（新增 49 個：`tests/delivery-adapters.test.ts` 25 個、`tests/connect-hermes.test.ts` 24 個） |
 
 涵蓋：舊設定 `delivery.hook` 沿用為 `delivery.cli`、state 鍵轉換、`status` 同時提供 `cli` 與 `hook`、V2 簽名以 Hermes 公式重算比對、沒有 secret 時不送簽名標頭、`X-Request-ID` 等於 `event_id`、secret 不出現在 `status`／`config get`／MCP、agent 不能修改 `delivery.*`、測試事件隔離、四級狀態轉換、24 小時逾時清理、處理失敗不移動 cursor、離線補讀、重新啟動後不重送、未設定資料夾時 agent 讀取回報錯誤而不是空清單。
 
@@ -31,12 +31,33 @@
 
 實作中發現並修正：`events ack`／`events report` 的 `--test`、`--json` 被上層 `events` 指令吃掉（改用 `optsWithGlobals`）；agent 讀取未設定的資料夾時原本回傳空清單（改為 exit 2）。
 
+## `ilearn connect hermes` 模擬端到端（本機，2026-10-24）
+
+以假的 `hermes` 指令（照官方 CLI 的指令形狀回應，記錄每次呼叫）、假 gateway（`/health`；`/webhooks/thu-ilearn` 依 V2 公式驗簽，通過回 202 並觸發排程）與一個只照固定提示詞步驟執行的腳本 agent，執行真正的 `runConnectHermes`（以腳本回答提問、全部確認）。
+
+| 項目 | 結果 |
+| --- | --- |
+| 偵測表：版本、cron status、gateway status、`webhook subscribe --cron-job` 支援、`/health` | PASS |
+| 指令都帶 `-p daily`；`cron create "*/5 * * * *" <固定提示詞> --name thu-ilearn-inbox --deliver telegram:42` | PASS |
+| `webhook subscribe thu-ilearn --cron-job thu-ilearn-inbox --secret …`；畫面與紀錄只顯示 `--secret ***` | PASS |
+| ilearn 的 webhook 指向 `http://127.0.0.1:<port>/webhooks/thu-ilearn` 並帶 secret | PASS |
+| 四級測試：webhook 簽名通過（202）→ 排程 agent 讀取、report、ACK → Transport／Agent／Processing／ACK 全 PASS | PASS |
+| 正式事件經簽名 webhook 觸發排程，agent 整理成通知（「資料結構：下週改到 M201 上課」）並 ACK | PASS |
+| secret 沒有出現在畫面輸出、`status`、hermes 呼叫紀錄 | PASS |
+| `--remove`：刪除排程與路由，ilearn webhook 關閉並清除 secret | PASS |
+
+模擬中發現並修正：
+- 提示詞原本寫入帶版本號的 node 路徑（`/opt/homebrew/Cellar/node/<版本>/bin/node`），升級 Node 後會失效；改用與背景服務相同的 `stableNodePath`，現在是 `/opt/homebrew/bin/node`。
+- webhook 已觸發排程後又執行 `cron run`，兩次執行同時處理同一則測試事件，測試成功訊息送出兩次；改為只在 webhook 沒有指向 Hermes 路由或沒有送達時才 `cron run`。
+
+未驗證：真正的 Hermes 指令輸出文字（`cron status` 判斷是否執行中的字樣）、`--cron-job` 是否存在於使用者安裝的版本、排程工作的 session 是否有終端機工具。這些都會在使用者於 Linux 執行 `ilearn connect hermes` 時由偵測表與四級測試直接顯示。
+
 ## 真正的 agent 端到端
 
 | 項目 | 狀態 |
 | --- | --- |
 | Claude（本 session）依 AGENTS.md 完成四級測試與正式事件的讀取、失敗回報、ACK | PASS（使用模擬接收器，不是 Hermes） |
-| Hermes：`hermes webhook subscribe` 建立路由、以相同 secret 驗簽、排程工作讀取並 ACK、`delivery test --status` 四級 PASS | TBD（需要使用者在 Linux 的 Hermes 上執行） |
+| Hermes：使用者在 Linux 執行 `ilearn connect hermes --profile daily`，四級測試全 PASS，並在通知頻道收到「thu-ilearn 推送測試成功」 | TBD（需要使用者在 Linux 的 Hermes 上執行） |
 
 ## 尚未能在目前環境驗證
 

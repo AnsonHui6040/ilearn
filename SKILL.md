@@ -52,6 +52,7 @@ webhook 與 CLI Adapter（本機指令）的推送只是「有新事件」的通
 ## 連接與測試推送
 
 - 連接時先實際檢查你的環境能做什麼（Hermes：`hermes --version`、`hermes webhook --help`、`hermes webhook list`、`curl -s http://127.0.0.1:8644/health`；其他 agent 查官方 `--help` 與文件），再依結果建議 webhook、CLI Adapter、排程輪詢或只在詢問時查詢。回覆固定為：檢查結果（附輸出）、推薦方式與原因、使用者要設定的值。詳見 `AGENTS.md` 的「連接時：檢查接收能力」與「Hermes 整合」。
+- 使用者要連接 Hermes 時，請他自己在互動終端執行 `ilearn connect hermes`（`--remove` 還原）；你不要執行這個指令，它會更改使用者的 Hermes 設定。
 - 推送方式與 webhook secret 只能由使用者在 `ilearn ui` 或 `ilearn setup` 設定，你不能改，也不要請使用者貼給你。
 - 測試：`delivery_test` 取得 `test_id`，再用 `events`（`test: true`）讀取、`events_report`（`test: true`、`status: processed`）、`events_ack`（`test: true`），最後 `delivery_test_status` 看 Transport、Agent、處理、ACK 四級結果。Transport PASS 只代表通知送達。測試事件不會進入正式事件。
 

@@ -192,6 +192,16 @@ webhook 設定 secret 後，每個請求都會帶 `X-Webhook-Timestamp`（Unix �
 
 `ilearn run`、`daemon`、`sync` 及 `reload` 結束時會送出到期的事件；`record` 等級不會送出。送不出去時依序等 5、10、20、40 分鐘，之後每 60 分鐘再試，超過 24 小時就放棄，事件仍保留在 outbox；重新啟動後沿用重試狀態，已送達的不會重送。`ilearn status` 會顯示重試中及已放棄的數量。
 
+### 連接 Hermes
+
+在安裝 Hermes 的機器上執行 `ilearn connect hermes [--profile <名稱>]`（需要互動終端，且已完成 `ilearn setup`）。它會先偵測 `hermes` 的版本、排程器、gateway、webhook 是否支援 `--cron-job` 與健康檢查，列出結果後再詢問 profile、agent 名稱、通知目標（例如 `telegram`）與 webhook 埠，接著逐項確認：
+
+1. 建立排程工作 `thu-ilearn-inbox`（每 5 分鐘讀取事件並通知，沒有內容時回覆 `[SILENT]`）。
+2. Hermes 支援 `--cron-job` 且 webhook 接收端正常時，建立 webhook 路由 `thu-ilearn`，並把 ilearn 的 webhook 設為該路由（secret 自動產生，不會顯示）。接收端沒有啟用時，可選擇補上 profile `.env` 的 `WEBHOOK_ENABLED`、`WEBHOOK_PORT` 並重新啟動 gateway；不啟用就只用排程輪詢，新事件最多延遲 5 分鐘。
+3. 自動執行推送測試與 `hermes cron run thu-ilearn-inbox`，每 10 秒查一次四級結果，最多 6 分鐘。
+
+每項更改都要你確認，拒絕的項目會略過。要還原請執行 `ilearn connect hermes --remove`，它會逐項確認後刪除排程工作與路由，並關閉 ilearn 的 webhook。
+
 ### 測試推送
 
 `ilearn delivery test --agent <名稱>` 會送出一則測試事件（`type` 為 `delivery.test`，只存放在 `outbox/test/`，不會進入正式事件或 ack 進度），並回傳 `test_id`。`ilearn delivery test --status <test_id>` 顯示四級結果：
@@ -224,6 +234,7 @@ Transport PASS 只代表通知送達；結果也會標示 webhook 有沒有簽�
 | `ilearn events ack <名稱> <event_id> [--test]` | 標記 agent 已處理到此事件 |
 | `ilearn events report <名稱> <event_id> --status processed\|failed [--note <說明>] [--test]` | agent 回報處理結果；失敗會顯示在 `ilearn status` 與 `ilearn ui`，不移動 ack 進度 |
 | `ilearn delivery test --agent <名稱>`、`ilearn delivery test --status <test_id>` | 送出測試事件；查詢 Transport、Agent、處理、ACK 四級結果 |
+| `ilearn connect hermes [--remove] [--profile <名稱>]` | 自動連接 Hermes：偵測、逐項確認後建立排程工作與 webhook 路由並測試；`--remove` 還原（只能由本人在互動終端執行） |
 | `ilearn summaries pending [--json]` | 列出還沒有摘要（或原文已變動）的公告與教材 |
 | `ilearn summaries write <target_id> --hash <h> [--agent <名稱>]` | 從標準輸入讀取摘要文字（最多 2000 字）並寫入；需要你先允許 agent 寫入摘要 |
 | `ilearn config get [--json]` | 目前的 agent 權限，以及 agent 可以修改的設定值（唯讀） |
