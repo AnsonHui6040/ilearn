@@ -103,6 +103,7 @@
 Linux 重建排程後（2026-10-24 18:xx）：`events --deliverable --agent hermes --compact` 剩 0 則，積壓已由新排程處理並 ACK。發現兩點並修正：
 - `processing_failures` 仍列出舊排程留下的 `failed`（4 次），但該事件已被 ACK。改為：agent 已 ACK 到該事件之後就視為已解決；`skipped` 仍列出。
 - Node 22 每次執行都在標準錯誤印出 SQLite 的 ExperimentalWarning，agent 可能誤認為錯誤。CLI 入口改為先換掉 warning 處理器、再以 dynamic import 載入主程式，只隱藏這一則警告；以 Node 22.13 確認標準錯誤為空，其他警告照常顯示。
+- Linux 更新到 `3eed934` 後確認：`processing_failures` 為 `[]`，執行 `ilearn` 不再出現 ExperimentalWarning（Node 22.22.1）。
 
 ## 真正的 agent 端到端
 
