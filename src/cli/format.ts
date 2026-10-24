@@ -1,7 +1,7 @@
 import type { PendingSummaries } from '../summaries/summaries.js';
 import type { TestStatus } from '../events/delivery-test.js';
 import type { WireEvent } from '../types.js';
-import type { announcementsCommand, coursesCommand, courseCommand, filesSearchCommand, gradesCommand, statusCommand, tasksCommand } from './commands/query.js';
+import type { CompactEvent, announcementsCommand, coursesCommand, courseCommand, filesSearchCommand, gradesCommand, statusCommand, tasksCommand } from './commands/query.js';
 
 type Ret<T extends (...a: never[]) => unknown> = ReturnType<T>;
 
@@ -20,10 +20,14 @@ export function tasksText(r: Ret<typeof tasksCommand>): string {
   return lines.join('\n');
 }
 
-export function eventsText(events: WireEvent[]): string {
+export function eventsText(events: (WireEvent | CompactEvent)[]): string {
   if (events.length === 0) return '沒有事件';
   return events
-    .map((e) => `${e.event_id}  ${e.detected_at.slice(5, 16).replace('T', ' ')}  ${e.type}  ${e.course?.name ?? '系統'}  ${e.item?.title ?? ''}`.trimEnd())
+    .map((e) =>
+      'detected_at' in e
+        ? `${e.event_id}  ${e.detected_at.slice(5, 16).replace('T', ' ')}  ${e.type}  ${e.course?.name ?? '系統'}  ${e.item?.title ?? ''}`.trimEnd()
+        : `${e.event_id}  ${e.deliver_after.slice(5, 16).replace('T', ' ')}  ${e.type}  ${e.course ?? '系統'}  ${e.title}`.trimEnd(),
+    )
     .join('\n');
 }
 
@@ -78,7 +82,7 @@ export function statusText(s: Ret<typeof statusCommand>): string {
     lines.push(`${name}：${parts.join('，')}`);
   }
   for (const f of s.processing_failures) {
-    lines.push(`處理失敗（${f.at.slice(5, 16).replace('T', ' ')}）：${f.agent} 處理 ${f.type} ${f.event_id}${f.note ? `：${f.note}` : ''}`);
+    lines.push(`${f.status === 'skipped' ? '已略過' : '處理失敗'}（${f.at.slice(5, 16).replace('T', ' ')}，共 ${f.count} 次）：${f.agent} 處理 ${f.type} ${f.event_id}${f.note ? `：${f.note}` : ''}`);
   }
   if (s.rules_warning) lines.push(`注意：${s.rules_warning}`);
   return lines.join('\n');

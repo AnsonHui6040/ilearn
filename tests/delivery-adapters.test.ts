@@ -6,15 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { configGet, configSet } from '../src/agent/settings.js';
 import { deliveryTestCommand, deliveryTestStatusCommand } from '../src/cli/commands/delivery.js';
 import { ackCommand, eventsCommand, reportCommand, statusCommand } from '../src/cli/commands/query.js';
-import { createContext, writeAccount, type CliContext } from '../src/cli/context.js';
+import { CliExit, createContext, writeAccount, type CliContext } from '../src/cli/context.js';
 import { statusText, testStatusText } from '../src/cli/format.js';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../src/config/config.js';
 import { dispatchPending, postWebhook, runHook } from '../src/events/dispatch.js';
 import { makeEvent, Outbox } from '../src/events/outbox.js';
+import { renderFolderView } from '../src/folder/folder.js';
+import { loadTuiData } from '../src/tui/data.js';
 import { createMcpServer, INSTRUCTIONS, MCP_TOOLS } from '../src/mcp/server.js';
 import type { IlearnEvent } from '../src/types.js';
 
@@ -332,7 +334,9 @@ describe('processing failure report', () => {
     expect(r.note!.length).toBeLessThanOrEqual(300);
     expect(eventsCommand(ctx, { deliverable: true, agent: 'claude' }).map((e) => e.event_id)).toEqual([b!.event_id, c!.event_id]);
     const s = statusCommand(ctx);
-    expect(s.processing_failures).toEqual([{ agent: 'claude', event_id: b!.event_id, type: 'announcement.new', at: '2026-10-22T12:00:00+08:00', note: r.note }]);
+    expect(s.processing_failures).toEqual([
+      { agent: 'claude', event_id: b!.event_id, type: 'announcement.new', status: 'failed', count: 1, first_at: '2026-10-22T12:00:00+08:00', at: '2026-10-22T12:00:00+08:00', note: r.note },
+    ]);
     expect(statusText(s)).toContain('處理失敗');
     expect(existsSync(join(root, 'outbox', 'reports.json'))).toBe(true);
   });
@@ -352,8 +356,223 @@ describe('processing failure report', () => {
     expect(() => reportCommand(ctx, { agent: 'claude', eventId: 'NOPE', status: 'failed' })).toThrow(/找不到事件/);
     const e = ev(1);
     ctx.outbox.append(e);
-    expect(() => reportCommand(ctx, { agent: 'claude', eventId: e.event_id, status: 'done' })).toThrow(/processed 或 failed/);
+    expect(() => reportCommand(ctx, { agent: 'claude', eventId: e.event_id, status: 'done' })).toThrow(/processed、failed 或 skipped/);
     expect(() => reportCommand(ctx, { agent: 'a b', eventId: e.event_id, status: 'failed' })).toThrow(/無效的 agent/);
+  });
+});
+
+describe('events --compact and --limit', () => {
+  const OLD = new Date('2020-01-01T04:00:00Z');
+  const append = (n: number, over: Partial<Parameters<typeof makeEvent>[0]> = {}): IlearnEvent => {
+    const e = ev(n, { detectedAt: new Date(OLD.getTime() + n * 1000), ...over });
+    ctx.outbox.append(e);
+    return e;
+  };
+
+  it('compact items have the documented shape and truncate long titles to 120 characters', () => {
+    const long = '很長的標題'.repeat(60);
+    const e = append(1, {
+      item: { id: 'a1', kind: 'assignment', title: long, due_at: '2026-10-30T15:59:00+08:00', url: 'https://x/a1' },
+      reload_id: 'R1',
+      offset: 'P1D',
+    });
+    const sys = append(2, { type: 'sync.incomplete', course: null, item: null, summary: '部分課程不完整' });
+    const [a, b] = eventsCommand(ctx, { compact: true });
+    expect(Object.keys(a!).sort()).toEqual(
+      ['course', 'deliver_after', 'delivery', 'due_at', 'event_id', 'failures', 'offset', 'reload_id', 'title', 'type', 'url'].sort(),
+    );
+    expect(a).toMatchObject({ event_id: e.event_id, type: 'announcement.new', delivery: 'push', course: '資料結構', due_at: '2026-10-30T15:59:00+08:00', url: 'https://x/a1', reload_id: 'R1', offset: 'P1D', failures: 0 });
+    expect([...a!.title]).toHaveLength(120);
+    expect(a!.title.endsWith('…')).toBe(true);
+    expect(b).toMatchObject({ event_id: sys.event_id, course: null, title: '部分課程不完整', due_at: null, url: null, failures: 0 });
+    expect(Object.keys(b!)).not.toContain('reload_id');
+    expect(JSON.stringify(a)).not.toContain('dedupe_key');
+  });
+
+  it('limit applies after the filters, oldest first, and rejects 0 and 101', () => {
+    const all = [1, 2, 3, 4, 5].map((n) => append(n, { type: n % 2 === 1 ? 'announcement.new' : 'material.new' }));
+    ackCommand(ctx, 'claude', all[0]!.event_id);
+    const ids = (o: Parameters<typeof eventsCommand>[1]): string[] => eventsCommand(ctx, o).map((e) => e.event_id);
+    expect(ids({ limit: 2 })).toEqual([all[0]!.event_id, all[1]!.event_id]);
+    expect(ids({ deliverable: true, agent: 'claude', limit: 2 })).toEqual([all[1]!.event_id, all[2]!.event_id]);
+    expect(ids({ type: 'announcement.new', limit: 2 })).toEqual([all[0]!.event_id, all[2]!.event_id]);
+    expect(ids({ limit: 100 })).toHaveLength(5);
+    expect(ids({ limit: '3', compact: true })).toHaveLength(3);
+    for (const bad of [0, 101, -1, 1.5, 'x', '']) {
+      expect(() => eventsCommand(ctx, { limit: bad })).toThrow(CliExit);
+    }
+    expect(() => eventsCommand(ctx, { limit: 0 })).toThrow(/1 到 100/);
+  });
+
+  it('failures counts only earlier failed reports by this agent', () => {
+    const [a, b] = [append(1), append(2)];
+    reportCommand(ctx, { agent: 'claude', eventId: a!.event_id, status: 'failed' });
+    reportCommand(ctx, { agent: 'claude', eventId: a!.event_id, status: 'failed' });
+    reportCommand(ctx, { agent: 'claude', eventId: b!.event_id, status: 'processed' });
+    reportCommand(ctx, { agent: 'other', eventId: b!.event_id, status: 'failed' });
+    const f = (agent?: string): number[] => eventsCommand(ctx, { compact: true, deliverable: true, ...(agent ? { agent } : {}) }).map((e) => e.failures);
+    expect(f('claude')).toEqual([2, 0]);
+    expect(f('other')).toEqual([0, 1]);
+    expect(f('nobody')).toEqual([0, 0]);
+    expect(f()).toEqual([0, 0]);
+  });
+
+  it('compact works with --test and counts no failures for test events', async () => {
+    const t = await deliveryTestCommand(ctx, { agent: 'claude' });
+    const r = eventsCommand(ctx, { agent: 'claude', test: true, compact: true, limit: 5 });
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ event_id: t.test_id, type: 'delivery.test', title: 'thu-ilearn 推送測試', course: null, failures: 0 });
+  });
+});
+
+describe('skipped reports and aggregation', () => {
+  const ids = (): string[] => eventsCommand(ctx, { deliverable: true, agent: 'claude' }).map((e) => e.event_id);
+
+  it('records a skipped event without moving the cursor, then lets the agent ack past it', () => {
+    const [a, b, c] = [ev(1), ev(2), ev(3)];
+    [a, b, c].forEach((e) => ctx.outbox.append(e!));
+    const r = reportCommand(ctx, { agent: 'claude', eventId: b!.event_id, status: 'skipped', note: `x${'y'.repeat(400)}` });
+    expect(r.status).toBe('skipped');
+    expect(r.note!.length).toBeLessThanOrEqual(300);
+    expect(ids()).toEqual([a!.event_id, b!.event_id, c!.event_id]);
+    ackCommand(ctx, 'claude', b!.event_id);
+    expect(ids()).toEqual([c!.event_id]);
+    expect(statusCommand(ctx).processing_failures).toMatchObject([{ event_id: b!.event_id, status: 'skipped', count: 1 }]);
+  });
+
+  it('skipped works for test events too', async () => {
+    const t = await deliveryTestCommand(ctx, { agent: 'claude' });
+    expect(reportCommand(ctx, { agent: 'claude', eventId: t.test_id, status: 'skipped', note: 'n', test: true })).toMatchObject({ status: 'skipped', test: true });
+  });
+
+  it('aggregates reports per agent and event with count, first_at, latest at and status', () => {
+    const [a, b] = [ev(1), ev(2)];
+    [a, b].forEach((e) => ctx.outbox.append(e!));
+    const at = (min: number): void => void (now = new Date(NOON.getTime() + min * 60_000));
+    reportCommand(ctx, { agent: 'claude', eventId: a!.event_id, status: 'failed', note: 'first' });
+    at(5);
+    reportCommand(ctx, { agent: 'claude', eventId: a!.event_id, status: 'failed', note: 'second' });
+    reportCommand(ctx, { agent: 'other', eventId: a!.event_id, status: 'failed', note: 'o' });
+    at(10);
+    reportCommand(ctx, { agent: 'claude', eventId: a!.event_id, status: 'failed', note: 'third' });
+    at(15);
+    reportCommand(ctx, { agent: 'claude', eventId: a!.event_id, status: 'skipped', note: 'quarantine' });
+    reportCommand(ctx, { agent: 'claude', eventId: b!.event_id, status: 'failed', note: 'b1' });
+    const f = statusCommand(ctx).processing_failures;
+    expect(f).toHaveLength(3);
+    expect(f.find((x) => x.agent === 'claude' && x.event_id === a!.event_id)).toEqual({
+      agent: 'claude', event_id: a!.event_id, type: 'announcement.new', status: 'skipped', count: 4,
+      first_at: '2026-10-22T12:00:00+08:00', at: '2026-10-22T12:15:00+08:00', note: 'quarantine',
+    });
+    expect(f.find((x) => x.agent === 'other')).toMatchObject({ status: 'failed', count: 1, note: 'o' });
+    expect(f.find((x) => x.event_id === b!.event_id)).toMatchObject({ status: 'failed', count: 1 });
+    // 7 天之後整筆消失
+    now = new Date(NOON.getTime() + 8 * 24 * 3_600_000);
+    expect(statusCommand(ctx).processing_failures).toEqual([]);
+  });
+
+  it('shows one line per event with the count and 已略過 in status, the TUI notices and 總覽.md', () => {
+    const [a, b] = [ev(1), ev(2)];
+    [a, b].forEach((e) => ctx.outbox.append(e!));
+    for (let i = 0; i < 3; i++) reportCommand(ctx, { agent: 'hermes', eventId: a!.event_id, status: 'failed', note: '工具輸出被截斷' });
+    reportCommand(ctx, { agent: 'hermes', eventId: b!.event_id, status: 'skipped', note: '無法解析' });
+    const s = statusCommand(ctx);
+    expect(s.processing_failures).toHaveLength(2);
+    const lines = statusText(s).split('\n').filter((l) => /處理失敗|已略過/.test(l));
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.includes(a!.event_id))).toMatch(/處理失敗.*共 3 次/);
+    expect(lines.find((l) => l.includes(b!.event_id))).toMatch(/已略過.*共 1 次/);
+    const notices = loadTuiData(ctx).notices.filter((n) => n.startsWith('hermes'));
+    expect(notices).toHaveLength(2);
+    expect(notices.some((n) => n.includes('處理失敗') && n.includes('共 3 次'))).toBe(true);
+    expect(notices.some((n) => n.includes('已略過') && n.includes('共 1 次'))).toBe(true);
+    ctx.config.interfaces.folder = true;
+    renderFolderView(ctx);
+    const md = readFileSync(join(root, '總覽.md'), 'utf8');
+    expect(md.match(/hermes .*共 3 次/g)).toHaveLength(1);
+    expect(md).toMatch(/hermes 已略過.*共 1 次/);
+  });
+});
+
+describe('MCP events limit and compact', () => {
+  const clients: Client[] = [];
+  afterEach(async () => {
+    await Promise.all(clients.splice(0).map((c) => c.close()));
+  });
+
+  it('accepts limit and compact, and rejects an out-of-range limit', async () => {
+    for (let n = 1; n <= 5; n++) ctx.outbox.append(ev(n));
+    const s = createMcpServer({ root, now: () => now });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '0' });
+    await Promise.all([s.connect(a), client.connect(b)]);
+    clients.push(client);
+    const call = async (args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> => {
+      const r = (await client.callTool({ name: 'events', arguments: args })) as { content: { text: string }[]; isError?: boolean };
+      return { text: r.content[0]?.text ?? '', isError: r.isError === true };
+    };
+    const ok = await call({ agent: 'claude', deliverable: true, compact: true, limit: 2 });
+    const list = JSON.parse(ok.text) as { event_id: string; failures: number; dedupe_key?: string }[];
+    expect(list).toHaveLength(2);
+    expect(list[0]).toMatchObject({ failures: 0 });
+    expect(list[0]!.dedupe_key).toBeUndefined();
+    const full = JSON.parse((await call({ agent: 'claude', deliverable: true })).text) as { event_id: string; dedupe_key: string }[];
+    expect(full).toHaveLength(5);
+    expect(list.map((e) => e.event_id)).toEqual(full.slice(0, 2).map((e) => e.event_id));
+    expect((await call({ limit: 101 })).isError).toBe(true);
+    expect((await call({ limit: 0 })).isError).toBe(true);
+    const skipped = (await client.callTool({ name: 'events_report', arguments: { agent: 'claude', event_id: list[0]!.event_id, status: 'skipped' } })) as { isError?: boolean };
+    expect(skipped.isError).not.toBe(true);
+  });
+});
+
+describe('CLI option parsing', () => {
+  const OLD = new Date('2020-01-01T04:00:00Z');
+  async function runCli(args: string[]): Promise<{ stdout: string; stderr: string }> {
+    const outs: string[] = [];
+    const errs: string[] = [];
+    const so = vi.spyOn(process.stdout, 'write').mockImplementation((c: string | Uint8Array) => (outs.push(String(c)), true));
+    const se = vi.spyOn(process.stderr, 'write').mockImplementation((c: string | Uint8Array) => (errs.push(String(c)), true));
+    const prevArgv = process.argv;
+    const prevHome = process.env.ILEARN_HOME;
+    process.argv = ['node', 'ilearn', ...args];
+    process.env.ILEARN_HOME = root;
+    try {
+      vi.resetModules();
+      await import('../src/cli/index.js');
+      await vi.waitFor(() => expect(outs.length + errs.length).toBeGreaterThan(0), { timeout: 5000 });
+    } finally {
+      process.argv = prevArgv;
+      if (prevHome === undefined) delete process.env.ILEARN_HOME;
+      else process.env.ILEARN_HOME = prevHome;
+      so.mockRestore();
+      se.mockRestore();
+      process.exitCode = undefined;
+    }
+    return { stdout: outs.join(''), stderr: errs.join('') };
+  }
+
+  it('merges parent and child options for events report ... --status skipped --test --json', async () => {
+    const t = await deliveryTestCommand(ctx, { agent: 'x' });
+    const r = await runCli(['events', 'report', 'x', t.test_id, '--status', 'skipped', '--test', '--note', 'n', '--json']);
+    expect(r.stderr).toBe('');
+    expect(JSON.parse(r.stdout)).toEqual({ agent: 'x', event_id: t.test_id, status: 'skipped', note: 'n', test: true });
+  });
+
+  it('parses events --deliverable --agent x --json --compact --limit 3', async () => {
+    for (let n = 1; n <= 5; n++) ctx.outbox.append(ev(n, { detectedAt: new Date(OLD.getTime() + n * 1000) }));
+    const r = await runCli(['events', '--deliverable', '--agent', 'x', '--json', '--compact', '--limit', '3']);
+    expect(r.stderr).toBe('');
+    const list = JSON.parse(r.stdout) as { title: string; failures: number }[];
+    expect(list.map((e) => e.title)).toEqual(['公告 1', '公告 2', '公告 3']);
+    expect(list.every((e) => e.failures === 0)).toBe(true);
+  });
+
+  it('rejects --limit 101 with exit code 1', async () => {
+    ctx.outbox.append(ev(1, { detectedAt: OLD }));
+    const r = await runCli(['events', '--agent', 'x', '--json', '--limit', '101']);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('1 到 100');
   });
 });
 
@@ -430,7 +649,7 @@ describe('MCP tools for delivery', () => {
     for (const n of ['events', 'events_ack']) {
       expect(JSON.stringify(tools.find((t) => t.name === n)?.inputSchema)).toContain('"test"');
     }
-    for (const phrase of ['不是資料來源', '不可信', '讀取失敗', '第一則失敗就停止']) expect(INSTRUCTIONS).toContain(phrase);
+    for (const phrase of ['不是資料來源', '不可信', '讀取失敗', 'compact: true', 'skipped', '不要用 jq']) expect(INSTRUCTIONS).toContain(phrase);
   });
 
   it('runs a whole delivery test through MCP without ever returning the secret', async () => {

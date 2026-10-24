@@ -202,8 +202,10 @@ const events = program
   .option('--type <類型>', '只列出指定類型')
   .option('--since <時間>', '只列出此時間之後偵測到的事件（ISO 格式）')
   .option('--test', '只列出該 agent 尚未 ACK 的 delivery test 測試事件（需要 --agent）')
+  .option('--limit <n>', '最多回傳 n 則（1 到 100 的整數，篩選之後取最舊的 n 則）')
+  .option('--compact', '精簡輸出：event_id、類型、課程、標題（最多 120 字）、時間、連結與該 agent 的失敗次數')
   .option('--json', '以 JSON 輸出')
-  .action((o: { deliverable?: boolean; agent?: string; type?: string; since?: string; test?: boolean; json?: boolean }) => {
+  .action((o: { deliverable?: boolean; agent?: string; type?: string; since?: string; test?: boolean; limit?: string; compact?: boolean; json?: boolean }) => {
     // agent 讀取時資料夾必須已設定：避免把「讀錯資料夾」誤當成「沒有新事件」
     const r = eventsCommand(o.agent !== undefined ? createSetUpContext() : createReadContext(), o);
     out(o.json, r, () => eventsText(r));
@@ -221,8 +223,8 @@ events
   });
 events
   .command('report <agent> <event_id>')
-  .description('回報事件處理結果；failed 會顯示在 ilearn status 與 ilearn ui，不會移動 ACK 進度')
-  .requiredOption('--status <狀態>', 'processed 或 failed')
+  .description('回報事件處理結果；failed、skipped 會顯示在 ilearn status 與 ilearn ui，不會移動 ACK 進度')
+  .requiredOption('--status <狀態>', 'processed、failed 或 skipped（skipped 是隔離：記錄後 agent 可以 ACK 越過）')
   .option('--note <說明>', '失敗原因等說明（最多 300 字）')
   .option('--test', '這是 delivery test 的測試事件')
   .option('--json', '以 JSON 輸出')

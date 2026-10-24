@@ -158,7 +158,12 @@ describe('connect hermes: cron 提示詞', () => {
   const p = buildCronPrompt({ node: '/opt/node/bin/node', script: '/opt/ilearn/dist/cli/index.js', root: '/home/a/.thu-ilearn', agent: 'hermes' });
   it('contains absolute paths, root, agent, rules and both flows', () => {
     expect(p).toContain('ILEARN_HOME="/home/a/.thu-ilearn" "/opt/node/bin/node" "/opt/ilearn/dist/cli/index.js" events --deliverable --agent hermes --test --json');
-    expect(p).toContain('events --deliverable --agent hermes --json');
+    expect(p).toContain('events --deliverable --agent hermes --test --json --compact --limit 5');
+    expect(p).toContain('events --deliverable --agent hermes --json --compact --limit 30');
+    expect(p).toContain('events report hermes <event_id> --status skipped --note');
+    expect(p).toContain('不要用 jq、python、node -e、grep');
+    expect(p).toContain('failures');
+    expect(p.length).toBeLessThan(3500);
     expect(p).toContain('events report hermes <event_id> --status processed --test');
     expect(p).toContain('events ack hermes <event_id> --test');
     expect(p).toContain('--status failed --note');

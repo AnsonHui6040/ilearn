@@ -53,20 +53,24 @@
 
 每 5 分鐘一次就夠，不要更頻繁。webhook 與 CLI Adapter 的推送只是「有新事件」的通知，outbox 才是唯一的事件來源，所以收到推送和定時檢查都做同樣的事：
 
-1. `ilearn events --deliverable --agent <你的名稱> --json`。空陣列就什麼都不做。
-2. 依 `event_id` 順序逐則處理：`force_push` 立刻通知，`push` 一般通知，`record` 不通知。同一個 `reload_id` 合併成一則。
-3. 某一則處理失敗：`ilearn events report <你的名稱> <event_id> --status failed --note <原因>`，然後停止，後面的事件留到下次。
-4. 處理成功的部分，`ilearn events ack <你的名稱> <最後一則成功的 event_id>`（ack 會連同之前的事件一起標記）。成功的事件也可以用 `ilearn events report <你的名稱> <event_id> --status processed` 記錄，這是選用的。
+排程（無人值守）時一律加 `--compact --limit 30`，輸出才不會長到被工具截斷；也不要用 jq、python、`node -e`、grep 或其他工具解析輸出，這些在無人值守的執行中常被擋下，直接閱讀 JSON 即可。
+
+1. `ilearn events --deliverable --agent <你的名稱> --json --compact --limit 30`。空陣列就什麼都不做。精簡事件只有 `event_id`、`type`、`delivery`、`deliver_after`、`course`、`title`（最多 120 字）、`due_at`、`url`、`reload_id`、`offset` 與 `failures`。`failures` 是你先前對這則事件回報 `failed` 的次數。
+2. 依 `event_id` 順序逐則處理：`force_push` 立刻通知，`push` 一般通知，`record` 不通知。同一頁內相同 `reload_id` 的事件合併成一則。
+3. 某一則無法處理，看它的 `failures`：
+   - `failures` 為 0 或 1：`ilearn events report <你的名稱> <event_id> --status failed --note <原因>`，然後停止，後面的事件留到下次。只有 `failures` 為 0 時才告訴使用者一次，之後的重試保持安靜。
+   - `failures` 為 2 以上：`ilearn events report <你的名稱> <event_id> --status skipped --note <原因>`，視為已處理並繼續，簡短告訴使用者一次已略過、可在 `ilearn ui` 查看。
+4. `ilearn events ack <你的名稱> <最後一則已處理的 event_id>`（ack 會連同之前的事件一起標記；已處理包含 `record` 與 `skipped`）。成功的事件也可以用 `ilearn events report <你的名稱> <event_id> --status processed` 記錄，這是選用的。這一頁剛好 30 則時，下次執行會接著處理。
 
 三種情況要分開處理：
 
 | 情況 | 表現 | 做法 |
 | --- | --- | --- |
 | 沒有新事件 | exit code 0，輸出 `[]` | 什麼都不做，也不需要通知使用者 |
-| 讀取失敗 | exit code 1 或 2，標準錯誤有訊息 | 不可以 ack；把訊息轉告使用者，exit code 2 請使用者自己登入 |
-| 處理失敗 | 讀到事件，但你的處理出錯 | `events report --status failed`，不可以 ack 該事件，也不可以跳過它去 ack 後面的事件 |
+| 讀取失敗 | exit code 1 或 2，標準錯誤有訊息 | 不可以 ack；同一次執行只把訊息轉告使用者一次，exit code 2 請使用者自己登入 |
+| 處理失敗 | 讀到事件，但你的處理出錯 | `failures` 為 0 或 1：`events report --status failed`，不可以 ack 該事件，也不可以跳過它去 ack 後面的事件。`failures` 為 2 以上：`events report --status skipped` 隔離該事件，之後可以 ack 越過它 |
 
-`events report` 不會移動 ack 進度。失敗紀錄會顯示在 `ilearn status` 的 `processing_failures`（最近 7 天）與 `ilearn ui` 的「3 提醒」。同一事件之後回報 `processed`，失敗紀錄就視為已解決。
+`events report` 不會移動 ack 進度。`failed` 與 `skipped` 會顯示在 `ilearn status` 的 `processing_failures`（最近 7 天，同一個 agent 與事件合併成一筆，附 `count`）與 `ilearn ui` 的「3 提醒」、`總覽.md`。同一事件之後回報 `processed`，紀錄就視為已解決。不要因為同一件事每次執行都通知使用者。
 
 ### 測試推送
 
@@ -94,7 +98,7 @@ Transport PASS 只代表通知送達，不代表你收得到或處理得了。�
 1. 確認自己的 profile：看環境變數 `HERMES_HOME`，路徑是 `~/.hermes/profiles/<名稱>` 時 profile 就是 `<名稱>`；否則執行 `hermes profile list`，取標有 `*` 的那一行。預設 profile（`default` 或 `~/.hermes`）一律當成空字串。
 2. 決定 `ILEARN_HOME`：必須是使用者實際使用的資料夾（預設 `~/.thu-ilearn`，見 README「交給 AI agent 安裝」第 1 步）。你的環境有沙盒或 `HOME` 不同時，明確指定，例如 `ILEARN_HOME="/Users/<使用者>/.thu-ilearn"`，之後每個 `ilearn` 指令都帶同一個值。
 3. 取得固定內容：`ilearn connect hermes --prompt --agent <你的名稱> --json`。輸出有 `cron_job`、`schedule`、`deliver`（`origin`）與 `prompt`。
-4. 用你自己的排程工具（cron）在目前這個對話建立排程工作：名稱 `thu-ilearn-inbox`、每 5 分鐘、通知送往這個對話（`origin`）、提示詞逐字使用第 3 步的 `prompt`，不要改寫或補充。
+4. 用你自己的排程工具（cron）在目前這個對話建立排程工作：名稱 `thu-ilearn-inbox`、每 5 分鐘、通知送往這個對話（`origin`）、提示詞逐字使用第 3 步的 `prompt`，不要改寫或補充。這個提示詞已包含 `--compact --limit 30`、失敗與略過的處理規則，以及「只執行列出的 ilearn 指令、不用 jq 或 python 解析」；排程在無人值守下執行，用解析工具會被擋下。
 5. 提出連接申請：`ilearn connect hermes --request --profile <第 1 步的 profile，預設用空字串> --agent <你的名稱>`。它只做唯讀偵測，不更改任何設定。輸出有警告（例如找不到排程工作）時先處理再重新申請。
 6. 把輸出的確認代碼告訴使用者，請使用者在自己的終端執行 `ilearn connect approve`，並核對畫面上的代碼與你說的一樣。申請 30 分鐘內有效。
 7. 使用者回覆完成後，執行 `ilearn delivery test --status <test_id> --json` 確認四級都是 PASS（`test_id` 請使用者從畫面複製），或等到收到「thu-ilearn 推送測試成功」的訊息。
@@ -145,7 +149,8 @@ Transport PASS 只代表通知送達，不代表你收得到或處理得了。�
 | --- | --- |
 | exit code 2 | 尚未設定或登入過期。請使用者自己執行 `ilearn login`（尚未設定時 `ilearn setup`），不要重試 |
 | 訊息提到「尚未允許」 | 停止，不要再試 |
-| `events` 讀取失敗（exit code 1 或 2） | 不可以 ack，把訊息轉告使用者；這與「空陣列＝沒有新事件」不同 |
+| `events` 讀取失敗（exit code 1 或 2） | 不可以 ack，把訊息轉告使用者一次；這與「空陣列＝沒有新事件」不同 |
+| 輸出過長被截斷、或需要解析工具才能處理 | 改用 `--compact --limit 30`，直接閱讀 JSON；不要用 jq、python 等工具，也不要因此每次執行都通知使用者 |
 | 訊息提到 hash 不符或原文已變動 | 重新執行 `summaries pending`，用新的 `source_hash` |
 | 訊息提到每日上限 | 今天停止寫摘要 |
 | 訊息提到不能修改、不在清單或值無效 | 停止，把訊息轉告使用者 |
@@ -165,10 +170,10 @@ Transport PASS 只代表通知送達，不代表你收得到或處理得了。�
 | 指令 | 回傳 |
 | --- | --- |
 | `ilearn tasks --json` | `{ initial_sync_in_progress, incomplete_courses, tasks[] }`。`tasks[]` 欄位：`id`、`kind`（`assignment` 或 `video`）、`course`、`title`、`due_at`、`overdue`、`not_started`、`group`、`teammate_hint`、`completion`、`url` |
-| `ilearn events --deliverable --agent <名稱> --json` | 該 agent 尚未 ack 且 `deliver_after` 已到的事件陣列 |
+| `ilearn events --deliverable --agent <名稱> --json [--compact] [--limit <n>]` | 該 agent 尚未 ack 且 `deliver_after` 已到的事件陣列。`--limit` 為 1 到 100 的整數，篩選之後取最舊的 n 則；`--compact` 回傳精簡事件（`event_id`、`type`、`delivery`、`deliver_after`、`course`（課程名稱）、`title`（最多 120 字）、`due_at`、`url`、`reload_id`、`offset`、`failures`）。`--test` 也可搭配使用。預設輸出不變 |
 | `ilearn events --deliverable --agent <名稱> --test --json` | 只回傳該 agent 尚未 ACK 的 `delivery.test` 測試事件（見「測試推送」）；不加 `--test` 時測試事件不會出現在任何輸出 |
 | `ilearn events ack <名稱> <event_id> [--test]` | 標記該 agent 已處理到此事件（含之前的）；`--test` 用於測試事件 |
-| `ilearn events report <名稱> <event_id> --status processed\|failed [--note <說明>] [--test] [--json]` | 回報處理結果，回傳 `{ agent, event_id, status, note }`。`failed` 會顯示在 `ilearn status` 與 `ilearn ui`；兩種結果都不會移動 ack 進度。說明最多 300 字，控制字元會被移除；事件不存在時 exit 1 |
+| `ilearn events report <名稱> <event_id> --status processed\|failed\|skipped [--note <說明>] [--test] [--json]` | 回報處理結果，回傳 `{ agent, event_id, status, note }`。`failed` 與 `skipped` 會顯示在 `ilearn status` 與 `ilearn ui`；`skipped` 是隔離，記錄後你可以 ack 越過該事件。任何結果都不會移動 ack 進度。說明最多 300 字，控制字元會被移除；事件不存在時 exit 1 |
 | `ilearn events [--type <類型>] [--since <ISO 時間>] --json` | 查詢全部正式事件（`--type` 不接受 `delivery.test`） |
 | `ilearn delivery test --agent <名稱> [--json]` | 送出測試事件，回傳 `{ test_id, agent, transport, signed, next_steps }`；尚未設定時 exit 2 |
 | `ilearn delivery test --status <test_id> [--json]` | 四級結果：Transport、Agent 讀取、處理、ACK，各為 `PASS`、`FAIL`、`PENDING` 或「未啟用」，另有 `signed` 與 `timed_out` |
@@ -178,7 +183,7 @@ Transport PASS 只代表通知送達，不代表你收得到或處理得了。�
 | `ilearn grades [--course <id>] --json` | 分數與評語 |
 | `ilearn files search <關鍵字> --json` | 以檔名搜尋，回傳本地路徑 |
 | `ilearn file text <id>` | 輸出 `.txt`、`.md` 檔案的文字；其他格式回傳「尚未支援」 |
-| `ilearn status --json` | 同步狀態、最近錯誤、首次同步進度、`delivery`（`cli`、`webhook`，舊名 `hook` 暫時保留，內容與 `cli` 相同；只有是否啟用與重試數量，沒有指令、網址或 secret）、`processing_failures`（最近 7 天的處理失敗：`agent`、`event_id`、`type`、`at`、`note`） |
+| `ilearn status --json` | 同步狀態、最近錯誤、首次同步進度、`delivery`（`cli`、`webhook`，舊名 `hook` 暫時保留，內容與 `cli` 相同；只有是否啟用與重試數量，沒有指令、網址或 secret）、`processing_failures`（最近 7 天尚未解決的 `failed` 或 `skipped`，每個 agent 與事件一筆：`agent`、`event_id`、`type`、`status`、`count`、`first_at`、`at`（最新一次）、`note`（最新一次）） |
 | `ilearn summaries pending --json` | `{ agent_write, remaining_today, pending[] }`。`pending[]` 欄位：`target_id`、`kind`（`announcement` 或 `material`）、`course`、`title`、`body`（公告內文）、`path`（教材的本機絕對路徑）、`source_hash` |
 | `ilearn summaries write <target_id> --hash <source_hash> [--agent <名稱>]` | 從標準輸入讀取摘要文字（最多 2000 字）並寫入；使用者沒有允許時 exit 1 |
 | `ilearn rules list --json` | 目前生效的規則（只讀） |
@@ -206,9 +211,9 @@ Transport PASS 只代表通知送達，不代表你收得到或處理得了。�
 | 工具 | 對應指令 | 參數 |
 | --- | --- | --- |
 | `tasks` | `ilearn tasks --json` | 無 |
-| `events` | `ilearn events --json` | `deliverable`、`agent`、`type`、`since`、`test`，皆可省略 |
+| `events` | `ilearn events --json` | `deliverable`、`agent`、`type`、`since`、`test`、`limit`（1 到 100）、`compact`，皆可省略 |
 | `events_ack` | `ilearn events ack` | `agent`、`event_id`，`test` 可省略 |
-| `events_report` | `ilearn events report` | `agent`、`event_id`、`status`（`processed` 或 `failed`），`note`、`test` 可省略 |
+| `events_report` | `ilearn events report` | `agent`、`event_id`、`status`（`processed`、`failed` 或 `skipped`），`note`、`test` 可省略 |
 | `delivery_test` | `ilearn delivery test --agent` | `agent` |
 | `delivery_test_status` | `ilearn delivery test --status --json` | `test_id` |
 | `courses` | `ilearn courses --json` | 無 |

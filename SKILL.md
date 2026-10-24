@@ -23,9 +23,9 @@ description: 讀取使用者已同步到本機的東海大學 iLearn 資料（�
 | 需要 | MCP 工具 | 指令 |
 | --- | --- | --- |
 | 未完成的作業及影片 | `tasks` | `ilearn tasks --json` |
-| 要通知使用者的新事件 | `events`（`deliverable: true`、`agent: <你的名稱>`） | `ilearn events --deliverable --agent <你的名稱> --json` |
+| 要通知使用者的新事件 | `events`（`deliverable: true`、`agent: <你的名稱>`、`compact: true`、`limit: 30`） | `ilearn events --deliverable --agent <你的名稱> --json --compact --limit 30` |
 | 標記事件已處理 | `events_ack` | `ilearn events ack <你的名稱> <event_id>` |
-| 回報處理結果（失敗時用 `failed`，不 ack） | `events_report`（`agent`、`event_id`、`status`、`note`） | `ilearn events report <你的名稱> <event_id> --status processed\|failed [--note <原因>]` |
+| 回報處理結果（失敗用 `failed`，不 ack；隔離用 `skipped`，之後可 ack 越過） | `events_report`（`agent`、`event_id`、`status`、`note`） | `ilearn events report <你的名稱> <event_id> --status processed\|failed\|skipped [--note <原因>]` |
 | 推送測試與四級結果 | `delivery_test`、`delivery_test_status` | `ilearn delivery test --agent <你的名稱>`、`ilearn delivery test --status <test_id>` |
 | 課程列表、單一課程 | `courses`、`course` | `ilearn courses --json`、`ilearn course <id> --json` |
 | 公告（`posted_at` 為 iLearn 發布時間） | `announcements` | `ilearn announcements [--category <代碼>] --json` |
@@ -42,11 +42,11 @@ description: 讀取使用者已同步到本機的東海大學 iLearn 資料（�
 
 webhook 與 CLI Adapter（本機指令）的推送只是「有新事件」的通知，outbox 才是唯一的事件來源；收到推送或定時檢查都做一樣的事。
 
-1. 取得 deliverable 事件。空陣列表示沒有新事件，什麼都不做。依 `delivery` 處理：`force_push` 立刻告訴使用者，`push` 正常通知，`record` 不主動通知。
+1. 取得 deliverable 事件，定時檢查一律用精簡輸出（`compact`、`limit` 30），並直接閱讀 JSON，不要用 jq、python 等工具解析。空陣列表示沒有新事件，什麼都不做。依 `delivery` 處理：`force_push` 立刻告訴使用者，`push` 正常通知，`record` 不主動通知。
 2. 同一個 `reload_id` 的事件可以合併成一則總覽。
 3. `grade.posted`、`feedback.posted` 只說哪一科有新分數或評語，不要主動讀出分數；使用者問了才用 `grades` 讀取。
-4. 依 `event_id` 順序處理。某一則失敗就用 `events_report`（`status: failed`，`note` 寫原因）回報並停止，不要 ack 它或後面的事件。
-5. 只 `ack` 最後一個處理成功的 `event_id`（ack 會連同之前的事件一起標記）。讀取失敗（exit code 1 或 2、工具錯誤）一律不可以 ack，把訊息轉告使用者。
+4. 依 `event_id` 順序處理。某一則無法處理就看它的 `failures`（你先前對它回報 `failed` 的次數）：0 或 1 用 `events_report`（`status: failed`，`note` 寫原因）回報並停止，不要 ack 它或後面的事件，只有 0 時才告訴使用者一次；2 以上改用 `status: skipped` 隔離，視為已處理並繼續，簡短告訴使用者一次。
+5. 只 `ack` 最後一個已處理（含 `record` 與 `skipped`）的 `event_id`（ack 會連同之前的事件一起標記）。讀取失敗（exit code 1 或 2、工具錯誤）一律不可以 ack，同一次執行只把訊息轉告使用者一次。
 6. 推送收到的事件也一樣要走這個流程。
 
 ## 連接與測試推送

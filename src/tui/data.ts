@@ -212,7 +212,7 @@ function notices(ctx: CliContext, status: TuiData['status']): string[] {
     if (n !== null) out.push(n);
   }
   for (const f of status.processing_failures) {
-    out.push(`${f.agent} 處理事件失敗（${f.type}）${f.note ? `：${f.note}` : ''}`);
+    out.push(`${f.agent} ${f.status === 'skipped' ? '已略過' : '處理失敗'}（${f.type}，共 ${f.count} 次）${f.note ? `：${f.note}` : ''}`);
   }
   if (ctx.rulesWarning !== undefined && ctx.rulesWarning !== '') out.push(`規則檔有問題：${ctx.rulesWarning}`);
   return out;

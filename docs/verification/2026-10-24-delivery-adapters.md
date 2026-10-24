@@ -7,7 +7,7 @@
 | 項目 | 結果 |
 | --- | --- |
 | `npm run typecheck`、`npm run lint`、`npm run build` | exit 0 |
-| `npm test` | 33 個測試檔，590 個測試全部通過（新增 61 個：`tests/delivery-adapters.test.ts` 25 個、`tests/connect-hermes.test.ts` 36 個） |
+| `npm test` | 33 個測試檔，602 個測試全部通過 |
 
 涵蓋：舊設定 `delivery.hook` 沿用為 `delivery.cli`、state 鍵轉換、`status` 同時提供 `cli` 與 `hook`、V2 簽名以 Hermes 公式重算比對、沒有 secret 時不送簽名標頭、`X-Request-ID` 等於 `event_id`、secret 不出現在 `status`／`config get`／MCP、agent 不能修改 `delivery.*`、測試事件隔離、四級狀態轉換、24 小時逾時清理、處理失敗不移動 cursor、離線補讀、重新啟動後不重送、未設定資料夾時 agent 讀取回報錯誤而不是空清單。
 
@@ -84,6 +84,21 @@
 - 排程是在命令列對話（`hermes chat -q`）建立，gateway 記錄「no delivery target resolved for deliver=origin」，所以這次通知只存在 `~/.hermes/cron/output/`。在 Telegram 等真正的對話裡建立時，origin 會是該對話。
 - 舊版 Hermes 沒有 `--cron-job`，新事件最多延遲 5 分鐘；新版 Hermes（官方文件有 `--cron-job`）會由 webhook 立即觸發。
 - Hermes 的回覆偶爾在通知後附加一行說明（例如「以上為 iLearn 事件原文，僅轉述」），不影響處理與 ACK。
+
+## 積壓事件處理（Linux 回報與修正，2026-10-24）
+
+使用者在 Linux（Hermes v0.16.0、profile daily、Telegram）測試：連接與四級測試通過，但真實事件處理失敗。排程讀取 `events --deliverable --json` 時輸出過長被工具截斷，無法處理；以 jq／python 精簡需要審批而被擋；同一事件每 5 分鐘回報失敗一次並通知使用者，從未 ACK；`processing_failures` 重複列出同一事件。使用者已暫停排程。
+
+修正：`events --compact`（精簡欄位、標題截到 120 字）與 `--limit`；`events report --status skipped`（同一事件失敗兩次後隔離略過，可 ACK 越過）；compact 每則附 `failures`，只在第一次失敗通知使用者；`processing_failures` 依事件合併並附次數；排程提示詞禁止使用 jq、python 等解析工具，每次讀 30 則。
+
+本機 Hermes v0.15.1 重測（隔離資料夾，60 則積壓：40 則同一 reload 批次、1 則 5000 字標題、19 則新項目其中 7 則 record）：
+
+| 項目 | 結果 |
+| --- | --- |
+| 精簡讀取一頁 30 則約 9 KB（原本一次全部約 46 KB） | PASS |
+| 第 1 次執行：30 則 reload 合併成一則總覽，ACK 推進，剩 30 則 | PASS |
+| 第 2 次執行：剩下 10 則 reload 合併、超長公告標題已截短、12 則新作業逐則通知、7 則 record 不通知，剩 0 則 | PASS |
+| `processing_failures` 為空，沒有截斷與失敗 | PASS |
 
 ## 真正的 agent 端到端
 
