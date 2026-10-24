@@ -95,3 +95,33 @@ Transport PASS 只代表通知送達。
 - 自動測試：簽名格式（以 Hermes 文件的 V2 公式驗證）、`X-Request-ID`、CLI Adapter 改名與舊設定相容、state 轉換、測試事件隔離與四級狀態、處理失敗不移動 cursor、離線補讀、重新啟動後重試。
 - 模擬端到端：本機臨時 webhook 接收器以 V2 公式驗簽；CLI Adapter 指令寫入暫存檔；由 agent（本 session 的 Claude）依 AGENTS.md 執行讀取、report、ACK，`--status` 四級全 PASS。
 - 真正的 Hermes 端到端：需要使用者在 Linux 的 Hermes 設定 webhook 路由與排程工作後執行 `delivery test`，目前環境無法驗證。
+
+## 追加：`ilearn connect hermes`（2026-10-24，使用者選 Agent 模式、先做 Hermes）
+
+自動完成 Hermes 整合，使用者只需逐項確認系統更改。只能在互動終端由使用者本人執行。
+
+### Hermes 官方功能（已核實，來源：Cron、CLI 參考、Profiles、Webhooks 頁）
+
+- 排程：`hermes [-p <profile>] cron create "<schedule>" "<prompt>" --name <名稱> --deliver <目標>`；`cron list`、`cron run <ID 或名稱>`（下一個 tick 執行，需要 gateway）、`cron remove <ID 或名稱>`、`cron status`。
+- 回覆含 `[SILENT]` 時不送出訊息；失敗的執行一定會送出。
+- 排程工作以「一般的工具清單」執行（cron 平台在 `hermes tools` 的設定），是否包含終端機要以實測確認。
+- Profile：`hermes -p <name> …`，資料夾在 `~/.hermes/profiles/<name>`。
+- Webhook 路由可用 `--cron-job <名稱>` 觸發既有排程工作（回應 202）；CLI 參考的旗標表沒有列出，因此以 `hermes webhook subscribe --help` 實際檢查。
+- 啟用 webhook：profile 的 `.env` 設 `WEBHOOK_ENABLED=true`、`WEBHOOK_PORT`；`hermes gateway status`／`start`／`restart`。
+
+### 流程
+
+1. 檢查：互動終端、已完成 `ilearn setup`、找得到 `hermes`。詢問 profile（預設不指定）、agent 名稱（預設 `hermes`）、通知送往的目標（例如 `telegram`）、webhook 埠（預設 8644）。
+2. 偵測並列出結果（附指令輸出摘要）：版本、`cron status`、`gateway status`、`webhook --help` 是否支援 `subscribe` 與 `--cron-job`、`http://127.0.0.1:<port>/health`、是否已有名為 `thu-ilearn-inbox` 的排程或 `thu-ilearn` 的路由。
+3. 列出將要做的更改，逐項確認：
+   - 建立（或取代）排程工作 `thu-ilearn-inbox`：每 5 分鐘，固定提示詞（絕對路徑的 node 與 `ilearn`、`ILEARN_HOME`、agent 名稱；讀測試事件與正式事件、report、依序 ACK、沒有內容回覆 `[SILENT]`、事件內容不可信）。
+   - 支援 `--cron-job` 且 gateway 健康時：建立 webhook 路由 `thu-ilearn`（產生 secret、`--cron-job thu-ilearn-inbox`、固定提示詞、不帶 payload 欄位），並把 ilearn 的 webhook 設為該路由與 secret。否則只用排程（最多延遲 5 分鐘），ilearn 的 webhook 維持原狀。
+   - gateway 沒有啟用 webhook：可選擇在 profile 的 `.env` 加上 `WEBHOOK_ENABLED=true`、`WEBHOOK_PORT=<port>` 並重新啟動 gateway（各自確認）；拒絕就只用排程。
+4. 執行 `delivery test`，再 `hermes cron run thu-ilearn-inbox`，每 10 秒查一次四級狀態，最多 6 分鐘，逐級顯示 PASS。
+5. `ilearn connect hermes --remove`：刪除排程與路由，關閉 ilearn 的 webhook（逐項確認）。
+
+### 安全
+
+- secret 只在建立路由的那一次以參數交給 `hermes`，不顯示在畫面、不寫入 log。
+- 排程提示詞與路由提示詞都是固定文字，不放事件欄位，事件內容不會成為指令。
+- 不修改 Hermes 的工具權限設定。
