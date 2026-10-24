@@ -352,6 +352,20 @@ describe('processing failure report', () => {
     expect(statusCommand(ctx).processing_failures).toEqual([]);
   });
 
+  it('a failure is resolved once the agent ACKs past it; skipped events stay listed', () => {
+    const [a, b, c] = [ev(1), ev(2), ev(3)];
+    [a, b, c].forEach((e) => ctx.outbox.append(e!));
+    reportCommand(ctx, { agent: 'claude', eventId: a!.event_id, status: 'failed', note: '輸出被截斷' });
+    reportCommand(ctx, { agent: 'claude', eventId: b!.event_id, status: 'skipped', note: '無法處理' });
+    reportCommand(ctx, { agent: 'other', eventId: a!.event_id, status: 'failed' });
+    ackCommand(ctx, 'claude', b!.event_id);
+    // claude 已 ACK 過 a：失敗已解決；b 是略過，仍列出；other 沒有 ACK，仍列出
+    expect(statusCommand(ctx).processing_failures.map((f) => `${f.agent}:${f.event_id}:${f.status}`)).toEqual([
+      `claude:${b!.event_id}:skipped`,
+      `other:${a!.event_id}:failed`,
+    ]);
+  });
+
   it('rejects unknown events, bad statuses and bad agent names', () => {
     expect(() => reportCommand(ctx, { agent: 'claude', eventId: 'NOPE', status: 'failed' })).toThrow(/找不到事件/);
     const e = ev(1);

@@ -450,6 +450,6 @@ export function statusCommand(ctx: CliContext) {
     rules_warning: ctx.rulesWarning ?? null,
     // 只回報是否啟用與失敗數，不輸出指令、網址或 secret 本身
     delivery: deliveryStatus(ctx),
-    processing_failures: recentFailures(ctx.outbox.outboxDir, ctx.now()),
+    processing_failures: recentFailures(ctx.outbox.outboxDir, ctx.now(), (a) => ctx.outbox.ackedThrough(a)),
   };
 }

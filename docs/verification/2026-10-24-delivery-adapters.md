@@ -7,7 +7,7 @@
 | 項目 | 結果 |
 | --- | --- |
 | `npm run typecheck`、`npm run lint`、`npm run build` | exit 0 |
-| `npm test` | 33 個測試檔，602 個測試全部通過 |
+| `npm test` | 33 個測試檔，603 個測試全部通過 |
 
 涵蓋：舊設定 `delivery.hook` 沿用為 `delivery.cli`、state 鍵轉換、`status` 同時提供 `cli` 與 `hook`、V2 簽名以 Hermes 公式重算比對、沒有 secret 時不送簽名標頭、`X-Request-ID` 等於 `event_id`、secret 不出現在 `status`／`config get`／MCP、agent 不能修改 `delivery.*`、測試事件隔離、四級狀態轉換、24 小時逾時清理、處理失敗不移動 cursor、離線補讀、重新啟動後不重送、未設定資料夾時 agent 讀取回報錯誤而不是空清單。
 
@@ -99,6 +99,10 @@
 | 第 1 次執行：30 則 reload 合併成一則總覽，ACK 推進，剩 30 則 | PASS |
 | 第 2 次執行：剩下 10 則 reload 合併、超長公告標題已截短、12 則新作業逐則通知、7 則 record 不通知，剩 0 則 | PASS |
 | `processing_failures` 為空，沒有截斷與失敗 | PASS |
+
+Linux 重建排程後（2026-10-24 18:xx）：`events --deliverable --agent hermes --compact` 剩 0 則，積壓已由新排程處理並 ACK。發現兩點並修正：
+- `processing_failures` 仍列出舊排程留下的 `failed`（4 次），但該事件已被 ACK。改為：agent 已 ACK 到該事件之後就視為已解決；`skipped` 仍列出。
+- Node 22 每次執行都在標準錯誤印出 SQLite 的 ExperimentalWarning，agent 可能誤認為錯誤。CLI 入口改為先換掉 warning 處理器、再以 dynamic import 載入主程式，只隱藏這一則警告；以 Node 22.13 確認標準錯誤為空，其他警告照常顯示。
 
 ## 真正的 agent 端到端
 

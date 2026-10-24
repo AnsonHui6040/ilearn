@@ -81,10 +81,21 @@ export function failedCounts(outboxDir: string, agent: string): Map<string, numb
 
 /**
  * 最近 7 天尚未解決的處理失敗，每個 agent 與事件只有一筆。
- * 之後同一個 agent 對同一事件回報 processed 就視為已解決，之前的失敗不再計入。
+ * 之後同一個 agent 對同一事件回報 processed，或已經 ACK 到這則事件之後，就視為已解決；
+ * 略過（skipped）的事件仍然列出，讓使用者知道有事件沒有通知。
  */
-export function recentFailures(outboxDir: string, now: Date): ProcessingFailure[] {
+export function recentFailures(
+  outboxDir: string,
+  now: Date,
+  ackedThrough: (agent: string) => string | null = () => null,
+): ProcessingFailure[] {
   const all = load(outboxDir);
+  const cursors = new Map<string, string | null>();
+  const acked = (agent: string, eventId: string): boolean => {
+    if (!cursors.has(agent)) cursors.set(agent, ackedThrough(agent));
+    const c = cursors.get(agent) ?? null;
+    return c !== null && eventId <= c;
+  };
   const groups = new Map<string, ProcessingFailure>();
   all.forEach((r, i) => {
     if (r.status === 'processed' || now.getTime() - Date.parse(r.at) > FAILURE_WINDOW_MS) return;
@@ -101,5 +112,7 @@ export function recentFailures(outboxDir: string, now: Date): ProcessingFailure[
       g.note = r.note;
     }
   });
-  return [...groups.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  return [...groups.values()]
+    .filter((g) => g.status === 'skipped' || !acked(g.agent, g.event_id))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }

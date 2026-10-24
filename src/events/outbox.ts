@@ -154,6 +154,15 @@ export class Outbox {
     return join(this.cursorsDir, `${agent}.json`);
   }
 
+  /** 該 agent 已 ACK 到的最後一個 event_id；名稱無效或沒有紀錄時為 null。 */
+  ackedThrough(agent: string): string | null {
+    try {
+      return this.getCursor(agent);
+    } catch {
+      return null;
+    }
+  }
+
   private getCursor(agent: string): string | null {
     const p = this.cursorPath(agent);
     if (!existsSync(p)) return null;
