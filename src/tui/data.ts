@@ -181,10 +181,10 @@ function announcements(ctx: CliContext, from: Date): AnnouncementRow[] {
     }));
 }
 
-function channelNotice(status: TuiData['status'], ch: 'hook' | 'webhook'): string | null {
+function channelNotice(status: TuiData['status'], ch: 'cli' | 'webhook'): string | null {
   const s = status.delivery[ch];
   if (s.retrying <= 0 && s.gave_up <= 0) return null;
-  const name = ch === 'hook' ? '本機指令 hook' : '本機 webhook';
+  const name = ch === 'cli' ? 'CLI Adapter（本機指令）' : '本機 webhook';
   const parts = [s.retrying > 0 ? `重試中 ${s.retrying} 則` : null, s.gave_up > 0 ? `放棄 ${s.gave_up} 則` : null];
   return `${name}${s.enabled ? '' : '（已停用）'}：${parts.filter((p) => p !== null).join('，')}`;
 }
@@ -207,9 +207,12 @@ function notices(ctx: CliContext, status: TuiData['status']): string[] {
     }
   }
   if (ctx.rules.length > 0 && ctx.rules.every((r) => !r.enabled)) out.push('通知規則全部停用，新公告不會推送');
-  for (const ch of ['hook', 'webhook'] as const) {
+  for (const ch of ['cli', 'webhook'] as const) {
     const n = channelNotice(status, ch);
     if (n !== null) out.push(n);
+  }
+  for (const f of status.processing_failures) {
+    out.push(`${f.agent} ${f.status === 'skipped' ? '已略過' : '處理失敗'}（${f.type}，共 ${f.count} 次）${f.note ? `：${f.note}` : ''}`);
   }
   if (ctx.rulesWarning !== undefined && ctx.rulesWarning !== '') out.push(`規則檔有問題：${ctx.rulesWarning}`);
   return out;

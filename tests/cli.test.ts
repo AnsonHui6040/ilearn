@@ -313,7 +313,7 @@ describe('reload', () => {
     const env = await seeded();
     env.clock.now = new Date('2026-10-22T17:00:00Z'); // 01:00 台北
     const out = join(env.root, 'hook.jsonl');
-    env.ctx.config.delivery.hook = { enabled: true, command: `cat >> "${out}"` };
+    env.ctx.config.delivery.cli = { enabled: true, command: `cat >> "${out}"` };
     const r = await reloadCommand(env.ctx, { yes: true });
     const lines = readFileSync(out, 'utf8').trim().split('\n');
     expect(lines.length).toBeGreaterThanOrEqual(r.pushed);
@@ -393,28 +393,28 @@ describe('run', () => {
     const env = await seeded();
     await reloadCommand(env.ctx, { yes: true });
     const out = join(env.root, 'hook.jsonl');
-    env.ctx.config.delivery.hook = { enabled: true, command: `cat >> "${out}"` };
+    env.ctx.config.delivery.cli = { enabled: true, command: `cat >> "${out}"` };
     const r1 = await runTick(env.ctx, { jitterMs: 0 });
     const pushable = eventsCommand(env.ctx, { deliverable: true }).filter((e) => e.delivery !== 'record');
     expect(pushable.length).toBeGreaterThan(0);
-    expect(r1.delivery.hook).toEqual({ sent: pushable.length, failed: 0 });
+    expect(r1.delivery.cli).toEqual({ sent: pushable.length, failed: 0 });
     const got = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { event_id: string });
     expect(got.map((e) => e.event_id)).toEqual(pushable.map((e) => e.event_id));
     const r2 = await runTick(env.ctx, { jitterMs: 0 });
-    expect(r2.delivery.hook.sent).toBe(0);
+    expect(r2.delivery.cli.sent).toBe(0);
   });
 
   it('logs hook failures, shows them in status and keeps events in the outbox', async () => {
     const env = await seeded();
     await reloadCommand(env.ctx, { yes: true });
     const before = eventsCommand(env.ctx, {}).length;
-    env.ctx.config.delivery.hook = { enabled: true, command: 'exit 7' };
+    env.ctx.config.delivery.cli = { enabled: true, command: 'exit 7' };
     const logs: string[] = [];
     const r = await runTick(env.ctx, { jitterMs: 0, log: (s) => logs.push(s) });
-    expect(r.delivery.hook.failed).toBeGreaterThan(0);
-    expect(logs).toContain(`本機指令 hook：${r.delivery.hook.failed} 則送出失敗，稍後重試（exit code 7）`);
+    expect(r.delivery.cli.failed).toBeGreaterThan(0);
+    expect(logs).toContain(`CLI Adapter（本機指令）：${r.delivery.cli.failed} 則送出失敗，稍後重試（exit code 7）`);
     const s = statusCommand(env.ctx);
-    expect(s.delivery.hook).toMatchObject({ enabled: true, retrying: r.delivery.hook.failed, gave_up: 0 });
+    expect(s.delivery.cli).toMatchObject({ enabled: true, retrying: r.delivery.cli.failed, gave_up: 0 });
     expect(json(s)).not.toContain('exit 7"');
     expect(eventsCommand(env.ctx, {})).toHaveLength(before);
   });
@@ -642,9 +642,9 @@ describe('setup delivery step', () => {
   it('summarises the chosen delivery methods', () => {
     const d = structuredClone(DEFAULT_CONFIG.delivery);
     expect(deliverySummary(d)).toBe('outbox 檔案');
-    d.hook = { enabled: true, command: 'my-agent notify' };
-    d.webhook = { enabled: true, url: DEFAULT_WEBHOOK_URL };
-    expect(deliverySummary(d)).toBe('outbox 檔案、本機指令 hook（my-agent notify）、本機 webhook（http://127.0.0.1:8787/ilearn）');
+    d.cli = { enabled: true, command: 'my-agent notify' };
+    d.webhook = { enabled: true, url: DEFAULT_WEBHOOK_URL, secret: 's' };
+    expect(deliverySummary(d)).toBe('outbox 檔案、CLI Adapter（本機指令）（my-agent notify）、本機 webhook（http://127.0.0.1:8787/ilearn，secret 已設定）');
   });
 });
 
@@ -878,16 +878,16 @@ describe('setup confirmation screen', () => {
     ctx.config.interfaces.folder = true;
     const t = setupTracker(root);
     const out = quiet();
-    const f = fake([5, 0], [['outbox', 'hook']]);
+    const f = fake([5, 0], [['outbox', 'cli']]);
     await confirmSettings(ctx, f.p, t);
     out.mockRestore();
     expect(f.asked.checkbox).toEqual(['推送方式']);
     expect(f.asked.input).toEqual(['每則推送事件要執行的指令']);
     expect(f.asked.select).toHaveLength(2);
-    expect(ctx.config.delivery.hook).toEqual({ enabled: true, command: 'my-agent notify' });
+    expect(ctx.config.delivery.cli).toEqual({ enabled: true, command: 'my-agent notify' });
     expect(ctx.config.environment).toBe('vps');
     expect(ctx.config.interfaces.folder).toBe(true);
-    expect(formatConfirmation(ctx)).toContain('本機指令 hook（my-agent notify）');
+    expect(formatConfirmation(ctx)).toContain('CLI Adapter（本機指令）（my-agent notify）');
   });
 
   it('modifying step 7 does not ask step 8', async () => {

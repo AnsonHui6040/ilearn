@@ -91,9 +91,32 @@ export const DEFAULT_WEBHOOK_URL = 'http://127.0.0.1:8787/ilearn';
 
 export function deliverySummary(d: Config['delivery']): string {
   const parts = ['outbox 檔案'];
-  if (d.hook.enabled) parts.push(`本機指令 hook（${d.hook.command}）`);
-  if (d.webhook.enabled) parts.push(`本機 webhook（${d.webhook.url}）`);
+  if (d.cli.enabled) parts.push(`CLI Adapter（本機指令）（${d.cli.command}）`);
+  if (d.webhook.enabled) parts.push(`本機 webhook（${d.webhook.url}，secret ${d.webhook.secret !== '' ? '已設定' : '未設定'}）`);
   return parts.join('、');
+}
+
+export interface SecretPrompts {
+  select<T>(o: { message: string; choices: { name: string; value: T }[]; default?: T }): Promise<T>;
+  password(o: { message: string; mask?: string | boolean }): Promise<string>;
+}
+
+/** webhook secret：已有就問保留、更換或清除；輸入時以 * 顯示。留空表示不簽名。 */
+export async function askWebhookSecret(p: SecretPrompts, current: string): Promise<string> {
+  const message = 'webhook secret（輸入時以 * 顯示，留空表示不簽名；Hermes 路由要填相同的值）';
+  if (current === '') return (await p.password({ message, mask: '*' })).trim();
+  const choice = await p.select<'keep' | 'replace' | 'clear'>({
+    message: 'webhook secret：目前已設定',
+    choices: [
+      { name: '保留', value: 'keep' },
+      { name: '更換', value: 'replace' },
+      { name: '清除（不簽名）', value: 'clear' },
+    ],
+    default: 'keep',
+  });
+  if (choice === 'keep') return current;
+  if (choice === 'clear') return '';
+  return (await p.password({ message, mask: '*' })).trim();
 }
 
 const shortTime = (iso: string): string => iso.slice(5, 16).replace('T', ' ');
@@ -447,19 +470,19 @@ async function askDelivery(ctx: CliContext, p: Prompts, t: SetupTracker): Promis
     message: '推送方式',
     choices: [
       { name: 'outbox 檔案（必備）', value: 'outbox', checked: true },
-      { name: '本機指令 hook（事件 JSON 經 stdin 傳入）', value: 'hook', checked: dl.hook.enabled },
+      { name: 'CLI Adapter（本機指令，事件 JSON 經 stdin 傳入）', value: 'cli', checked: dl.cli.enabled },
       { name: '本機 webhook（POST 到 localhost）', value: 'webhook', checked: dl.webhook.enabled },
     ],
     theme: checkboxTheme,
   });
   const next: Config['delivery'] = structuredClone(dl);
-  next.hook.enabled = ways.includes('hook');
+  next.cli.enabled = ways.includes('cli');
   next.webhook.enabled = ways.includes('webhook');
-  if (next.hook.enabled) {
-    next.hook.command = (
+  if (next.cli.enabled) {
+    next.cli.command = (
       await p.input({
         message: '每則推送事件要執行的指令',
-        ...(dl.hook.command ? { default: dl.hook.command } : {}),
+        ...(dl.cli.command ? { default: dl.cli.command } : {}),
         validate: (v: string) => v.trim() !== '' || '請輸入指令',
       })
     ).trim();
@@ -472,6 +495,7 @@ async function askDelivery(ctx: CliContext, p: Prompts, t: SetupTracker): Promis
         validate: (v: string) => webhookUrlError(v.trim()) ?? true,
       })
     ).trim();
+    next.webhook.secret = await askWebhookSecret(p, dl.webhook.secret);
   }
   ctx.config.delivery = next;
   saveConfig(ctx.config, ctx.root);

@@ -173,22 +173,22 @@ describe('notices', () => {
     expect(d.notices).toEqual(['首次同步進行中，資料可能不完整（課程 0／?、檔案 0／0）']);
   });
 
-  it('資料不完整、登入過期、規則全停用、hook 與 webhook 重試、規則檔問題，依序出現', () => {
+  it('資料不完整、登入過期、規則全停用、CLI Adapter 與 webhook 重試、規則檔問題，依序出現', () => {
     const ctx = mk();
     course(ctx, '1', '資料結構', '1151_CS101', '115-1');
     setSyncState(ctx.db, { initial_completed: true, last_sync_at: iso(-2 * H), incomplete_courses: ['1'] });
     ctx.outbox.append(event('auth.expired', new Date(NOW.getTime() - H)));
     ctx.rules = ctx.rules.map((r) => ({ ...r, enabled: false }));
-    ctx.config.delivery.hook.enabled = true;
+    ctx.config.delivery.cli.enabled = true;
     ctx.config.delivery.webhook.enabled = false;
     vi.spyOn(ctx.outbox, 'hookStats').mockImplementation((ch) =>
-      ch === 'hook' ? { retrying: 2, gave_up: 0, last_error: null } : { retrying: 0, gave_up: 3, last_error: null });
+      ch === 'cli' ? { retrying: 2, gave_up: 0, last_error: null } : { retrying: 0, gave_up: 3, last_error: null });
     ctx.rulesWarning = 'rules.yaml 無效';
     expect(loadTuiData(ctx).notices).toEqual([
       '資料可能不完整：資料結構',
       '登入已過期，請在終端執行 ilearn login',
       '通知規則全部停用，新公告不會推送',
-      '本機指令 hook：重試中 2 則',
+      'CLI Adapter（本機指令）：重試中 2 則',
       '本機 webhook（已停用）：放棄 3 則',
       '規則檔有問題：rules.yaml 無效',
     ]);

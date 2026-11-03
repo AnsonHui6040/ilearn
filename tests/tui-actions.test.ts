@@ -418,23 +418,23 @@ describe('rule editor', () => {
 describe('delivery and interfaces', () => {
   it('saves hook and webhook settings', () => {
     const ctx = mk();
-    applyDelivery(ctx, { hook: { enabled: true, command: 'my-agent notify' }, webhook: { enabled: true, url: 'http://127.0.0.1:8787/ilearn' } });
-    expect(loadConfig(ctx.root).delivery).toEqual({ hook: { enabled: true, command: 'my-agent notify' }, webhook: { enabled: true, url: 'http://127.0.0.1:8787/ilearn' } });
-    expect(ctx.config.delivery.hook.enabled).toBe(true);
+    applyDelivery(ctx, { cli: { enabled: true, command: 'my-agent notify' }, webhook: { enabled: true, url: 'http://127.0.0.1:8787/ilearn', secret: 's3' } });
+    expect(loadConfig(ctx.root).delivery).toEqual({ cli: { enabled: true, command: 'my-agent notify' }, webhook: { enabled: true, url: 'http://127.0.0.1:8787/ilearn', secret: 's3' } });
+    expect(ctx.config.delivery.cli.enabled).toBe(true);
   });
 
   it('rejects an empty hook command and a non-local webhook', () => {
     const ctx = mk();
-    expect(() => applyDelivery(ctx, { hook: { enabled: true, command: ' ' }, webhook: { enabled: false, url: '' } })).toThrow('請輸入指令');
-    expect(() => applyDelivery(ctx, { hook: { enabled: false, command: '' }, webhook: { enabled: true, url: 'http://example.com/x' } })).toThrow(/只接受本機位址/);
+    expect(() => applyDelivery(ctx, { cli: { enabled: true, command: ' ' }, webhook: { enabled: false, url: '', secret: '' } })).toThrow('請輸入指令');
+    expect(() => applyDelivery(ctx, { cli: { enabled: false, command: '' }, webhook: { enabled: true, url: 'http://example.com/x', secret: '' } })).toThrow(/只接受本機位址/);
     expect(loadConfig(ctx.root).delivery).toEqual(DEFAULT_CONFIG.delivery);
   });
 
   it('keeps a disabled channel’s old command and address', () => {
     const ctx = mk();
-    applyDelivery(ctx, { hook: { enabled: true, command: 'old-cmd' }, webhook: { enabled: false, url: '' } });
-    applyDelivery(ctx, { hook: { enabled: false, command: 'old-cmd' }, webhook: { enabled: false, url: '' } });
-    expect(loadConfig(ctx.root).delivery.hook).toEqual({ enabled: false, command: 'old-cmd' });
+    applyDelivery(ctx, { cli: { enabled: true, command: 'old-cmd' }, webhook: { enabled: false, url: '', secret: '' } });
+    applyDelivery(ctx, { cli: { enabled: false, command: 'old-cmd' }, webhook: { enabled: false, url: '', secret: '' } });
+    expect(loadConfig(ctx.root).delivery.cli).toEqual({ enabled: false, command: 'old-cmd' });
   });
 
   it('turns the folder view on and off; the terminal stays on', () => {

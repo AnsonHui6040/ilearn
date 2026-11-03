@@ -4,7 +4,7 @@ import { rulesEditCommand } from '../cli/commands/rules.js';
 import { deliverCommand, reloadCommand, syncCommand } from '../cli/commands/sync.js';
 import { renderFolderView } from '../folder/folder.js';
 import { logout } from '../cli/auth.js';
-import { DEFAULT_WEBHOOK_URL, formatProgress, runLogin } from '../cli/setup.js';
+import { askWebhookSecret, DEFAULT_WEBHOOK_URL, formatProgress, runLogin } from '../cli/setup.js';
 import { webhookUrlError } from '../events/dispatch.js';
 import type { Rule } from '../rules/engine.js';
 import { dataRoot } from '../config/paths.js';
@@ -46,6 +46,7 @@ export interface PromptDeps {
   checkbox<T>(o: { message: string; choices: { name: string; value: T; checked?: boolean; disabled?: boolean | string }[] }): Promise<T[]>;
   select<T>(o: { message: string; choices: { name: string; value: T }[]; default?: T }): Promise<T>;
   confirm(o: { message: string; default?: boolean }): Promise<boolean>;
+  password(o: { message: string; mask?: string | boolean }): Promise<string>;
 }
 
 export interface UiDeps {
@@ -291,17 +292,17 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
       message: '推送方式',
       choices: [
         { name: 'outbox 檔案（必備）', value: 'outbox', checked: true, disabled: '必備' },
-        { name: '本機指令 hook（事件 JSON 經 stdin 傳入）', value: 'hook', checked: dl.hook.enabled },
+        { name: 'CLI Adapter（本機指令，事件 JSON 經 stdin 傳入）', value: 'cli', checked: dl.cli.enabled },
         { name: '本機 webhook（POST 到 localhost）', value: 'webhook', checked: dl.webhook.enabled },
       ],
     });
     const next = structuredClone(dl);
-    next.hook.enabled = ways.includes('hook');
+    next.cli.enabled = ways.includes('cli');
     next.webhook.enabled = ways.includes('webhook');
-    if (next.hook.enabled) {
-      next.hook.command = await prompts.input({
+    if (next.cli.enabled) {
+      next.cli.command = await prompts.input({
         message: '每則推送事件要執行的指令',
-        ...(dl.hook.command ? { default: dl.hook.command } : {}),
+        ...(dl.cli.command ? { default: dl.cli.command } : {}),
         validate: (v) => v.trim() !== '' || '請輸入指令',
       });
     }
@@ -311,6 +312,7 @@ export async function runUi(ctx: CliContext, term: Term, deps: UiDeps): Promise<
         default: dl.webhook.url || DEFAULT_WEBHOOK_URL,
         validate: (v) => webhookUrlError(v.trim()) ?? true,
       });
+      next.webhook.secret = await askWebhookSecret(prompts, dl.webhook.secret);
     }
     applyDelivery(ctx, next);
     return '已儲存推送方式';

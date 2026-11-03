@@ -1,7 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { extname, resolve, sep } from 'node:path';
 import { getSyncState, listFiles, listItems, setCompletion, type StoredCourse, type StoredFile, type StoredItem } from '../../db/repo.js';
-import type { EventType, IlearnEvent } from '../../types.js';
+import type { EventType, WireEvent } from '../../types.js';
+import { ackTest, readTestEvents, reportTest } from '../../events/delivery-test.js';
+import { checkAgent } from '../../events/outbox.js';
+import { cleanNote, failedCounts, recentFailures, recordReport, type ReportStatus } from '../../events/reports.js';
 import { summaryTexts } from '../../summaries/summaries.js';
 import { toTaipeiIso } from '../../time.js';
 import { absPath, CliExit, readAccount, type CliContext } from '../context.js';
@@ -253,25 +256,133 @@ export function fileTextCommand(ctx: CliContext, id: string): { supported: boole
 
 /* ---------- events ---------- */
 
-export function eventsCommand(
-  ctx: CliContext,
-  o: { deliverable?: boolean; agent?: string; type?: string; since?: string },
-): IlearnEvent[] {
-  if (o.type !== undefined && !EVENT_TYPES.includes(o.type as EventType)) {
-    throw new CliExit(1, `未知的事件類型：${o.type}`);
-  }
-  return ctx.outbox.read({
-    ...(o.deliverable ? { deliverableAt: ctx.now() } : {}),
-    ...(o.agent !== undefined ? { agent: o.agent } : {}),
-    ...(o.type !== undefined ? { type: o.type as EventType } : {}),
-    ...(o.since !== undefined ? { since: o.since } : {}),
-  });
+export interface CompactEvent {
+  event_id: string;
+  type: WireEvent['type'];
+  delivery: WireEvent['delivery'];
+  deliver_after: string;
+  course: string | null;
+  title: string;
+  due_at: string | null;
+  url: string | null;
+  reload_id?: string;
+  offset?: string;
+  /** 該 agent 先前對這則事件回報 failed 的次數；沒有帶 agent 時為 0 */
+  failures: number;
 }
 
-export function ackCommand(ctx: CliContext, agent: string, eventId: string): { agent: string; last_event_id: string } {
+export const EVENTS_LIMIT_MAX = 100;
+const COMPACT_TITLE_MAX = 120;
+
+const clip = (s: string): string => {
+  const t = s.replace(/\s+/g, ' ').trim();
+  return [...t].length > COMPACT_TITLE_MAX ? `${[...t].slice(0, COMPACT_TITLE_MAX - 1).join('')}…` : t;
+};
+
+/** 精簡版事件：只有 agent 判斷與通知需要的欄位，標題截短，不含內文。 */
+export function compactEvent(e: WireEvent, failures: number): CompactEvent {
+  const e2 = e as WireEvent & { reload_id?: string; offset?: string };
+  return {
+    event_id: e.event_id,
+    type: e.type,
+    delivery: e.delivery,
+    deliver_after: e.deliver_after,
+    course: e.course?.name ?? null,
+    title: clip(e.item?.title ?? e.summary ?? ''),
+    due_at: e.item?.due_at ?? null,
+    url: e.item?.url ?? null,
+    ...(e2.reload_id !== undefined ? { reload_id: e2.reload_id } : {}),
+    ...(e2.offset !== undefined ? { offset: e2.offset } : {}),
+    failures,
+  };
+}
+
+export interface EventsOptions {
+  deliverable?: boolean;
+  agent?: string;
+  type?: string;
+  since?: string;
+  test?: boolean;
+  limit?: number | string;
+  compact?: boolean;
+}
+
+function parseLimit(v: number | string | undefined): number | null {
+  if (v === undefined) return null;
+  const n = typeof v === 'number' ? v : /^\d+$/.test(v.trim()) ? Number(v.trim()) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > EVENTS_LIMIT_MAX) throw new CliExit(1, `--limit 必須是 1 到 ${EVENTS_LIMIT_MAX} 的整數`);
+  return n;
+}
+
+export function eventsCommand(ctx: CliContext, o: EventsOptions & { compact: true }): CompactEvent[];
+export function eventsCommand(ctx: CliContext, o: EventsOptions & { compact?: false }): WireEvent[];
+export function eventsCommand(ctx: CliContext, o: EventsOptions): WireEvent[] | CompactEvent[];
+export function eventsCommand(ctx: CliContext, o: EventsOptions): WireEvent[] | CompactEvent[] {
+  const limit = parseLimit(o.limit);
+  let list: WireEvent[];
+  if (o.test) {
+    if (o.agent === undefined) throw new CliExit(1, '--test 需要帶 --agent <名稱>');
+    if (o.type !== undefined || o.since !== undefined) throw new CliExit(1, '--test 不能與 --type、--since 一起使用');
+    list = readTestEvents(ctx.outbox.outboxDir, o.agent, ctx.now());
+  } else {
+    if (o.type !== undefined && !EVENT_TYPES.includes(o.type as EventType)) {
+      throw new CliExit(1, `未知的事件類型：${o.type}`);
+    }
+    list = ctx.outbox.read({
+      ...(o.deliverable ? { deliverableAt: ctx.now() } : {}),
+      ...(o.agent !== undefined ? { agent: o.agent } : {}),
+      ...(o.type !== undefined ? { type: o.type as EventType } : {}),
+      ...(o.since !== undefined ? { since: o.since } : {}),
+    });
+  }
+  if (limit !== null) list = list.slice(0, limit);
+  if (!o.compact) return list;
+  const counts = o.agent !== undefined && !o.test ? failedCounts(ctx.outbox.outboxDir, o.agent) : new Map<string, number>();
+  return list.map((e) => compactEvent(e, counts.get(e.event_id) ?? 0));
+}
+
+export function ackCommand(
+  ctx: CliContext,
+  agent: string,
+  eventId: string,
+  o: { test?: boolean } = {},
+): { agent: string; last_event_id: string; test?: true } {
+  if (o.test) {
+    try {
+      ackTest(ctx.outbox.outboxDir, agent, eventId, ctx.now());
+    } catch (e) {
+      throw new CliExit(1, e instanceof Error ? e.message : String(e));
+    }
+    return { agent, last_event_id: eventId, test: true };
+  }
   if (!ctx.outbox.read().some((e) => e.event_id === eventId)) throw new CliExit(1, `找不到事件 ${eventId}`);
   ctx.outbox.ack(agent, eventId);
   return { agent, last_event_id: eventId };
+}
+
+export const REPORT_STATUSES = ['processed', 'failed', 'skipped'] as const satisfies readonly ReportStatus[];
+
+/** agent 回報處理結果。failed 與 skipped 會顯示在 status 與 ilearn ui 提醒頁；任何結果都不會移動 cursor。skipped 表示隔離，agent 之後可以 ACK 越過。 */
+export function reportCommand(
+  ctx: CliContext,
+  o: { agent: string; eventId: string; status: string; note?: string; test?: boolean },
+): { agent: string; event_id: string; status: ReportStatus; note: string | null; test?: true } {
+  checkAgent(o.agent);
+  if (!REPORT_STATUSES.includes(o.status as ReportStatus)) throw new CliExit(1, '--status 只能是 processed、failed 或 skipped');
+  const status = o.status as ReportStatus;
+  if (o.test) {
+    try {
+      const r = reportTest(ctx.outbox.outboxDir, o.agent, o.eventId, status, o.note, ctx.now());
+      return { agent: o.agent, event_id: o.eventId, status, note: r.processed?.note ?? null, test: true };
+    } catch (e) {
+      throw new CliExit(1, e instanceof Error ? e.message : String(e));
+    }
+  }
+  const ev = ctx.outbox.read().find((e) => e.event_id === o.eventId);
+  if (!ev) throw new CliExit(1, `找不到事件 ${o.eventId}`);
+  const note = cleanNote(o.note);
+  recordReport(ctx.outbox.outboxDir, { agent: o.agent, event_id: o.eventId, type: ev.type, status, note }, ctx.now());
+  return { agent: o.agent, event_id: o.eventId, status, note };
 }
 
 /* ---------- mark-teammate ---------- */
@@ -295,6 +406,23 @@ export function markTeammateCommand(
 }
 
 /* ---------- status ---------- */
+
+export interface ChannelStatus {
+  enabled: boolean;
+  retrying: number;
+  gave_up: number;
+  last_error: string | null;
+}
+
+function deliveryStatus(ctx: CliContext): { cli: ChannelStatus; webhook: ChannelStatus; hook: ChannelStatus } {
+  const ch = (c: 'cli' | 'webhook'): ChannelStatus => ({
+    enabled: ctx.config.delivery[c].enabled,
+    ...ctx.outbox.hookStats(c, ctx.now()),
+  });
+  const cli = ch('cli');
+  // hook 是 cli 的舊名稱，之後的版本會移除
+  return { cli, webhook: ch('webhook'), hook: { ...cli } };
+}
 
 export function statusCommand(ctx: CliContext) {
   const st = getSyncState(ctx.db);
@@ -320,12 +448,8 @@ export function statusCommand(ctx: CliContext) {
     files: { pending: count('pending'), done: count('done'), skipped: count('skipped'), failed: count('failed'), link: count('link') },
     last_error: readLastError(ctx.root),
     rules_warning: ctx.rulesWarning ?? null,
-    // 只回報是否啟用與失敗數，不輸出指令或網址本身
-    delivery: Object.fromEntries(
-      (['hook', 'webhook'] as const).map((ch) => [
-        ch,
-        { enabled: ctx.config.delivery[ch].enabled, ...ctx.outbox.hookStats(ch, ctx.now()) },
-      ]),
-    ) as Record<'hook' | 'webhook', { enabled: boolean; retrying: number; gave_up: number; last_error: string | null }>,
+    // 只回報是否啟用與失敗數，不輸出指令、網址或 secret 本身
+    delivery: deliveryStatus(ctx),
+    processing_failures: recentFailures(ctx.outbox.outboxDir, ctx.now(), (a) => ctx.outbox.ackedThrough(a)),
   };
 }

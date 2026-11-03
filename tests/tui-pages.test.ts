@@ -170,11 +170,12 @@ describe('3 提醒', () => {
 describe('5 系統設定', () => {
   it('never shows the hook command or the webhook address', () => {
     const ctx = seeded();
-    ctx.config.delivery = { hook: { enabled: true, command: 'secret-hook-cmd' }, webhook: { enabled: true, url: 'http://127.0.0.1:9/secret-path' } };
+    ctx.config.delivery = { cli: { enabled: true, command: 'secret-hook-cmd' }, webhook: { enabled: true, url: 'http://127.0.0.1:9/secret-path', secret: 'topsecret-value' } };
     for (let i = 1; i <= 13; i++) {
       const out = text(show(ctx, { ...onTab(5), cursor: [i, 0] }, 100));
       expect(out).not.toContain('secret-hook-cmd');
       expect(out).not.toContain('secret-path');
+      expect(out).not.toContain('topsecret-value');
     }
   });
 

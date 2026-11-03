@@ -17,6 +17,9 @@ export type EventType =
   | 'sync.incomplete'
   | 'sync.initial_completed';
 
+/** 推送時實際送出的事件：正式事件，或只出現在 delivery test 的測試事件。 */
+export type WireEvent = Omit<IlearnEvent, 'type'> & { type: EventType | 'delivery.test' };
+
 export type ItemKind =
   | 'assignment'
   | 'exam'

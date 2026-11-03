@@ -18,7 +18,12 @@ export interface AgentPermissions {
 export interface Config {
   environment: 'desktop' | 'vps';
   interfaces: { terminal: boolean; folder: boolean; web: boolean; desktop: boolean };
-  delivery: { hook: { enabled: boolean; command: string }; webhook: { enabled: boolean; url: string } };
+  delivery: {
+    /** CLI Adapter（本機指令）：事件 JSON 經 stdin 傳入 */
+    cli: { enabled: boolean; command: string };
+    /** secret 非空時，webhook 會加上 HMAC-SHA256 簽名；只能由使用者本人設定，不會輸出到任何查詢結果 */
+    webhook: { enabled: boolean; url: string; secret: string };
+  };
   quiet_hours: { start: string; end: string };
   reminders: { offsets: string[] };
   force_push_offsets: string[];
@@ -41,8 +46,8 @@ export const DEFAULT_CONFIG: Config = {
   environment: 'desktop',
   interfaces: { terminal: true, folder: true, web: false, desktop: false },
   delivery: {
-    hook: { enabled: false, command: '' },
-    webhook: { enabled: false, url: '' },
+    cli: { enabled: false, command: '' },
+    webhook: { enabled: false, url: '', secret: '' },
   },
   quiet_hours: { start: '00:00', end: '07:00' },
   reminders: { offsets: ['P1D', 'PT3H'] },
@@ -78,10 +83,20 @@ export function loadConfig(root: string = dataRoot()): Config {
   if (!existsSync(file)) return structuredClone(DEFAULT_CONFIG);
   const parsed: unknown = parse(readFileSync(file, 'utf8'));
   const legacy = takeLegacyAgentWrite(parsed);
+  migrateLegacyHook(parsed);
   const cfg = merge(DEFAULT_CONFIG, parsed);
   // 未發布版本的 summaries.agent_write: true 只轉成新的權限一次，之後沒有任何程式讀它
   if (legacy && !hasOwn(parsed, 'agent_permissions', 'summaries')) cfg.agent_permissions.summaries = true;
   return cfg;
+}
+
+/** 舊版的 delivery.hook 改名為 delivery.cli：沒有 cli 時沿用，之後存檔只會寫 cli。 */
+function migrateLegacyHook(parsed: unknown): void {
+  if (!isPlainObject(parsed) || !isPlainObject(parsed.delivery)) return;
+  const d = parsed.delivery;
+  if (!('hook' in d)) return;
+  if (!('cli' in d) && isPlainObject(d.hook)) d.cli = d.hook;
+  delete d.hook;
 }
 
 function hasOwn(root: unknown, group: string, key: string): boolean {
